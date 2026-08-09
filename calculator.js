@@ -95,19 +95,126 @@ function calculateComboBonus(salonsTotal, salonsComboDone) {
   };
 }
 
+/** Максимальные коэффициенты экономического блока. */
+const ECONOMY_FIRST_COEFF_MAX = 1.1;
+const ECONOMY_EFFICIENCY_MAX = 1.2;
+
 /**
- * Максимально возможный бонус KPI при идеальных коэффициентах.
- * Кредиты/аттачмент max = 1.1, эффективность max = 1.2
+ * Максимальный бонус KPI при ТЕКУЩЕМ коэффициенте Кредитов/аттачмента
+ * и максимальной эффективности (×1,2).
+ * Не подставляет автоматически ×1,1, если текущий коэффициент ниже.
  */
-function getMaxEconomyBonus(baseAmount, usesCredit, usesAttachment) {
-  const firstCoeff = usesCredit || usesAttachment ? 1.1 : 1;
-  const efficiencyMax = 1.2;
-  return baseAmount * firstCoeff * efficiencyMax;
+function calculateMaximumBonus(baseAmount, currentFirstCoeff) {
+  return roundMoney(baseAmount * currentFirstCoeff * ECONOMY_EFFICIENCY_MAX);
 }
 
 /**
- * Ближайший порог эффективности.
+ * Абсолютный максимум KPI: база × 1,1 × 1,2.
+ * Используется только для «можно дополнительно получить» без двойного учёта.
  */
+function calculateAbsoluteMaximumBonus(baseAmount) {
+  return roundMoney(baseAmount * ECONOMY_FIRST_COEFF_MAX * ECONOMY_EFFICIENCY_MAX);
+}
+
+/**
+ * Потеря = максимум − текущий бонус (неотрицательная).
+ */
+function calculateLoss(currentBonus, maximumBonus) {
+  return roundMoney(Math.max(0, maximumBonus - currentBonus));
+}
+
+/**
+ * Потенциальный плюс при переходе с текущих коэффициентов на новые.
+ * Всегда от текущего фактического результата — без двойного учёта.
+ */
+function calculatePotentialGain(baseAmount, currentFirst, currentEff, nextFirst, nextEff) {
+  const current = roundMoney(baseAmount * currentFirst * currentEff);
+  const next = roundMoney(baseAmount * nextFirst * nextEff);
+  return roundMoney(Math.max(0, next - current));
+}
+
+/**
+ * Ближайший порог по типу показателя.
+ * kind: 'efficiency' | 'credit' | 'attachment'
+ */
+function getNextThreshold(kind, value) {
+  if (kind === 'efficiency') {
+    return getNextEfficiencyThreshold(value);
+  }
+
+  if (kind === 'credit') {
+    const p = Number(value) || 0;
+    if (p < 100) {
+      return {
+        currentLabel: '<100%',
+        nextThreshold: 100,
+        percentNeeded: Math.max(0, 100 - p),
+        nextCoefficient: 1.0,
+        maxThreshold: 110,
+        maxCoefficient: ECONOMY_FIRST_COEFF_MAX,
+      };
+    }
+    if (p < 110) {
+      return {
+        currentLabel: '100–109,9%',
+        nextThreshold: 110,
+        percentNeeded: Math.max(0, 110 - p),
+        nextCoefficient: ECONOMY_FIRST_COEFF_MAX,
+        maxThreshold: 110,
+        maxCoefficient: ECONOMY_FIRST_COEFF_MAX,
+      };
+    }
+    return {
+      currentLabel: '≥110%',
+      nextThreshold: null,
+      percentNeeded: 0,
+      nextCoefficient: ECONOMY_FIRST_COEFF_MAX,
+      maxThreshold: 110,
+      maxCoefficient: ECONOMY_FIRST_COEFF_MAX,
+    };
+  }
+
+  if (kind === 'attachment') {
+    const v = Number(value) || 0;
+    if (v <= 2.29) {
+      return {
+        currentLabel: '≤2,29',
+        nextThreshold: 2.3,
+        percentNeeded: Math.max(0, 2.3 - v),
+        nextCoefficient: 1.0,
+        maxThreshold: 3.6,
+        maxCoefficient: ECONOMY_FIRST_COEFF_MAX,
+      };
+    }
+    if (v < 3.6) {
+      return {
+        currentLabel: '2,3–3,59',
+        nextThreshold: 3.6,
+        percentNeeded: Math.max(0, 3.6 - v),
+        nextCoefficient: ECONOMY_FIRST_COEFF_MAX,
+        maxThreshold: 3.6,
+        maxCoefficient: ECONOMY_FIRST_COEFF_MAX,
+      };
+    }
+    return {
+      currentLabel: '≥3,6',
+      nextThreshold: null,
+      percentNeeded: 0,
+      nextCoefficient: ECONOMY_FIRST_COEFF_MAX,
+      maxThreshold: 3.6,
+      maxCoefficient: ECONOMY_FIRST_COEFF_MAX,
+    };
+  }
+
+  return {
+    currentLabel: '—',
+    nextThreshold: null,
+    percentNeeded: 0,
+    nextCoefficient: null,
+  };
+}
+
+/** Совместимость со старым API. */
 function getNextEfficiencyThreshold(completionPercent) {
   const p = Number(completionPercent) || 0;
 
@@ -132,14 +239,420 @@ function getNextEfficiencyThreshold(completionPercent) {
       currentLabel: '85–119,9%',
       nextThreshold: 120,
       percentNeeded: Math.max(0, 120 - p),
-      nextCoefficient: 1.2,
+      nextCoefficient: ECONOMY_EFFICIENCY_MAX,
     };
   }
   return {
     currentLabel: '≥120%',
     nextThreshold: null,
     percentNeeded: 0,
-    nextCoefficient: 1.2,
+    nextCoefficient: ECONOMY_EFFICIENCY_MAX,
+  };
+}
+
+/**
+ * Текстовая расшифровка причин потери по KPI.
+ */
+function getLossReason(kpiAnalytics) {
+  const reasons = [];
+  const eff = kpiAnalytics.efficiencyFactor;
+  const first = kpiAnalytics.firstFactor;
+
+  if (eff && eff.loss > 0.009) {
+    if (kpiAnalytics.completion < 75) {
+      reasons.push({
+        severity: 'critical',
+        title: 'KPI не приносит бонус',
+        text: `Выполнение ${formatPercent(kpiAnalytics.completion)}, коэффициент эффективности ×0`,
+        amount: eff.loss,
+      });
+    } else if (eff.next && eff.next.nextThreshold != null) {
+      reasons.push({
+        severity: 'negative',
+        title: `Не достигнут порог ${formatPercent(eff.next.nextThreshold, 0)}`,
+        text: `Коэффициент эффективности ×${formatCoeff(kpiAnalytics.efficiencyCoeff)} при выполнении ${formatPercent(kpiAnalytics.completion)}`,
+        amount: eff.loss,
+      });
+    } else {
+      reasons.push({
+        severity: 'negative',
+        title: `Коэффициент эффективности = ×${formatCoeff(kpiAnalytics.efficiencyCoeff)}`,
+        text: `Выполнение плана ${formatPercent(kpiAnalytics.completion)}`,
+        amount: eff.loss,
+      });
+    }
+  } else if (eff && kpiAnalytics.efficiencyCoeff >= ECONOMY_EFFICIENCY_MAX) {
+    reasons.push({
+      severity: 'positive',
+      title: 'Максимальный коэффициент эффективности достигнут',
+      text: 'Дополнительного увеличения бонуса за счёт эффективности нет',
+      amount: 0,
+    });
+  }
+
+  if (first && first.loss > 0.009) {
+    if (first.kind === 'credit') {
+      reasons.push({
+        severity: 'negative',
+        title: 'Кредиты ниже максимального уровня',
+        text: `Выполнение доли кредитов ${formatPercent(first.inputValue)}, коэффициент ×${formatCoeff(first.currentCoeff)} вместо ×${formatCoeff(ECONOMY_FIRST_COEFF_MAX)}`,
+        amount: first.loss,
+      });
+    } else {
+      reasons.push({
+        severity: 'negative',
+        title: 'Аттачмент снижает бонус',
+        text: `Аттачмент ${formatNumber(first.inputValue, 2)}, коэффициент ×${formatCoeff(first.currentCoeff)} вместо ×${formatCoeff(ECONOMY_FIRST_COEFF_MAX)}`,
+        amount: first.loss,
+      });
+    }
+  } else if (first && first.currentCoeff >= ECONOMY_FIRST_COEFF_MAX) {
+    reasons.push({
+      severity: 'positive',
+      title: first.kind === 'credit' ? 'Кредиты на максимуме' : 'Аттачмент на максимуме',
+      text: `Коэффициент ×${formatCoeff(first.currentCoeff)}`,
+      amount: 0,
+    });
+  }
+
+  return reasons;
+}
+
+/**
+ * Конкретные действия для улучшения KPI.
+ */
+function getNextAction(kpiAnalytics) {
+  const actions = [];
+  const eff = kpiAnalytics.efficiencyFactor;
+  const first = kpiAnalytics.firstFactor;
+
+  if (eff && eff.next && eff.next.nextThreshold != null && eff.nextGain > 0.009) {
+    actions.push({
+      id: 'efficiency',
+      title: 'Эффективность',
+      currentLabel: formatPercent(kpiAnalytics.completion),
+      nextLabel: formatPercent(eff.next.nextThreshold, 0),
+      needLabel: `+${formatNumber(eff.next.percentNeeded, 1)} п.п.`,
+      potentialPlus: eff.nextGain,
+      detail: `После достижения ${formatPercent(eff.next.nextThreshold, 0)} коэффициент станет ×${formatCoeff(eff.next.nextCoefficient)}`,
+    });
+  }
+
+  if (first && first.next && first.next.nextThreshold != null && first.nextGain > 0.009) {
+    const isCredit = first.kind === 'credit';
+    actions.push({
+      id: first.kind,
+      title: isCredit ? 'Кредиты' : 'Аттачмент',
+      currentLabel: isCredit
+        ? formatPercent(first.inputValue)
+        : formatNumber(first.inputValue, 2),
+      nextLabel: isCredit
+        ? formatPercent(first.next.nextThreshold, 0)
+        : formatNumber(first.next.nextThreshold, 2),
+      needLabel: isCredit
+        ? `+${formatNumber(first.next.percentNeeded, 1)} п.п.`
+        : `+${formatNumber(first.next.percentNeeded, 2)}`,
+      potentialPlus: first.nextGain,
+      detail: `Следующий коэффициент: ×${formatCoeff(first.next.nextCoefficient)}`,
+    });
+  }
+
+  return actions;
+}
+
+/**
+ * Расширенная аналитика одного экономического KPI.
+ * Потери по факторам показываются отдельно; итоговый потенциал = absoluteMax − current
+ * (без суммирования факторов — это исключает двойной учёт).
+ */
+function buildKpiAnalytics(kpi, context) {
+  const base = kpi.baseAmount;
+  const firstCoeff = kpi.firstCoeff;
+  const efficiencyCoeff = kpi.efficiencyCoeff;
+  const currentBonus = kpi.bonus;
+
+  const maxAtCurrentFirst = calculateMaximumBonus(base, firstCoeff);
+  const absoluteMax = calculateAbsoluteMaximumBonus(base);
+  const lossVsCurrentMax = calculateLoss(currentBonus, maxAtCurrentFirst);
+  // Итоговая потеря / потенциал без двойного учёта
+  const lossTotal = calculateLoss(currentBonus, absoluteMax);
+  const potentialPlus = lossTotal;
+
+  const effNext = getNextThreshold('efficiency', kpi.completion);
+  const efficiencyFactor = {
+    kind: 'efficiency',
+    currentCoeff: efficiencyCoeff,
+    maxCoeff: ECONOMY_EFFICIENCY_MAX,
+    // Потеря эффективности при текущем Кредиты/аттачменте
+    loss: lossVsCurrentMax,
+    next: effNext,
+    nextGain: effNext.nextThreshold == null
+      ? 0
+      : calculatePotentialGain(base, firstCoeff, efficiencyCoeff, firstCoeff, effNext.nextCoefficient),
+    maxGain: calculatePotentialGain(
+      base,
+      firstCoeff,
+      efficiencyCoeff,
+      firstCoeff,
+      ECONOMY_EFFICIENCY_MAX
+    ),
+  };
+
+  let firstFactor = null;
+  if (kpi.usesCredit) {
+    const creditNext = getNextThreshold('credit', context.creditPlanPercent);
+    firstFactor = {
+      kind: 'credit',
+      inputValue: context.creditPlanPercent,
+      currentCoeff: firstCoeff,
+      maxCoeff: ECONOMY_FIRST_COEFF_MAX,
+      // Эффект только от улучшения Кредитов при текущей эффективности
+      loss: calculatePotentialGain(
+        base,
+        firstCoeff,
+        efficiencyCoeff,
+        ECONOMY_FIRST_COEFF_MAX,
+        efficiencyCoeff
+      ),
+      next: creditNext,
+      nextGain: creditNext.nextThreshold == null
+        ? 0
+        : calculatePotentialGain(
+            base,
+            firstCoeff,
+            efficiencyCoeff,
+            creditNext.nextCoefficient,
+            efficiencyCoeff
+          ),
+      maxGain: calculatePotentialGain(
+        base,
+        firstCoeff,
+        efficiencyCoeff,
+        ECONOMY_FIRST_COEFF_MAX,
+        efficiencyCoeff
+      ),
+    };
+  } else if (kpi.usesAttachment) {
+    const attNext = getNextThreshold('attachment', context.attachment);
+    firstFactor = {
+      kind: 'attachment',
+      inputValue: context.attachment,
+      currentCoeff: firstCoeff,
+      maxCoeff: ECONOMY_FIRST_COEFF_MAX,
+      loss: calculatePotentialGain(
+        base,
+        firstCoeff,
+        efficiencyCoeff,
+        ECONOMY_FIRST_COEFF_MAX,
+        efficiencyCoeff
+      ),
+      next: attNext,
+      nextGain: attNext.nextThreshold == null
+        ? 0
+        : calculatePotentialGain(
+            base,
+            firstCoeff,
+            efficiencyCoeff,
+            attNext.nextCoefficient,
+            efficiencyCoeff
+          ),
+      maxGain: calculatePotentialGain(
+        base,
+        firstCoeff,
+        efficiencyCoeff,
+        ECONOMY_FIRST_COEFF_MAX,
+        efficiencyCoeff
+      ),
+    };
+  }
+
+  const analytics = {
+    ...kpi,
+    maxBonus: maxAtCurrentFirst,
+    absoluteMaxBonus: absoluteMax,
+    loss: lossTotal,
+    lossVsCurrentMax,
+    potentialPlus,
+    efficiencyFactor,
+    firstFactor,
+    progressPercent: Math.min(120, Math.max(0, kpi.completion)),
+  };
+
+  analytics.reasons = getLossReason(analytics);
+  analytics.actions = getNextAction(analytics);
+
+  // Главная причина для сводки «Из-за чего я теряю»
+  const negativeReasons = analytics.reasons.filter((r) => r.severity !== 'positive' && r.amount > 0.009);
+  if (lossTotal < 0.01) {
+    analytics.primaryReason = {
+      severity: 'positive',
+      summary: 'Потерь нет — показатель на максимуме',
+      amount: 0,
+    };
+  } else if (negativeReasons.length) {
+    const top = [...negativeReasons].sort((a, b) => b.amount - a.amount)[0];
+    analytics.primaryReason = {
+      severity: top.severity === 'critical' ? 'critical' : 'negative',
+      summary: top.title,
+      detail: top.text,
+      amount: lossTotal,
+    };
+  } else {
+    analytics.primaryReason = {
+      severity: 'warning',
+      summary: 'Есть потенциал роста',
+      amount: lossTotal,
+    };
+  }
+
+  return analytics;
+}
+
+/**
+ * Аналитика Комбо 40%+.
+ * Не умножается на Кредиты / аттачмент / эффективность.
+ */
+function buildComboAnalytics(combo) {
+  const maxBonus = roundMoney(combo.salonsTotal * COMBO_BONUS_PER_SALON);
+  const loss = roundMoney(combo.salonsNotDone * COMBO_BONUS_PER_SALON);
+  const potentialPlus = loss;
+
+  const reasons = [];
+  if (combo.salonsNotDone > 0) {
+    reasons.push({
+      severity: 'negative',
+      title: `${combo.salonsNotDone} ${pluralSalons(combo.salonsNotDone)} не выполнили KPI`,
+      text: `Потеря = ${combo.salonsNotDone} × ${formatMoney(COMBO_BONUS_PER_SALON)}`,
+      amount: loss,
+    });
+  } else if (combo.salonsTotal > 0) {
+    reasons.push({
+      severity: 'positive',
+      title: 'Все салоны выполнили KPI Комбо 40%+',
+      text: 'Потерь по Комбо нет',
+      amount: 0,
+    });
+  } else {
+    reasons.push({
+      severity: 'warning',
+      title: 'Салоны не указаны',
+      text: 'Укажите количество салонов в подчинении',
+      amount: 0,
+    });
+  }
+
+  const actions = [];
+  if (combo.salonsNotDone > 0) {
+    actions.push({
+      id: 'combo',
+      title: 'Комбо 40%+',
+      currentLabel: `${combo.salonsComboDone} из ${combo.salonsTotal}`,
+      nextLabel: `${combo.salonsTotal} из ${combo.salonsTotal}`,
+      needLabel: `+${combo.salonsNotDone} салон(ов)`,
+      potentialPlus: loss,
+      detail: `Каждый выполнивший салон даёт ${formatMoney(COMBO_BONUS_PER_SALON)}`,
+    });
+  }
+
+  return {
+    id: 'combo',
+    name: 'Комбо 40%+',
+    ...combo,
+    maxBonus,
+    absoluteMaxBonus: maxBonus,
+    loss,
+    potentialPlus,
+    reasons,
+    actions,
+    primaryReason:
+      loss > 0
+        ? {
+            severity: 'negative',
+            summary: `${combo.salonsNotDone} ${pluralSalons(combo.salonsNotDone)} не выполнили KPI`,
+            amount: loss,
+          }
+        : {
+            severity: 'positive',
+            summary: 'Потерь по Комбо нет',
+            amount: 0,
+          },
+  };
+}
+
+function pluralSalons(n) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'салон';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'салона';
+  return 'салонов';
+}
+
+/**
+ * Сводная аналитика экономического блока.
+ * Итоговый потенциал = сумма (absoluteMax − current) по KPI + потеря Комбо.
+ * Факторные «что если» не суммируются между собой.
+ */
+function calculateEconomyAnalytics(kpis, combo, context) {
+  const kpiAnalytics = kpis.map((kpi) => buildKpiAnalytics(kpi, context));
+  const comboAnalytics = buildComboAnalytics(combo);
+
+  const items = [
+    ...kpiAnalytics.map((k) => ({
+      id: k.id,
+      name: k.name,
+      loss: k.loss,
+      potentialPlus: k.potentialPlus,
+      currentBonus: k.bonus,
+      maxBonus: k.maxBonus,
+      absoluteMaxBonus: k.absoluteMaxBonus,
+      primaryReason: k.primaryReason,
+      reasons: k.reasons,
+      actions: k.actions,
+    })),
+    {
+      id: comboAnalytics.id,
+      name: comboAnalytics.name,
+      loss: comboAnalytics.loss,
+      potentialPlus: comboAnalytics.potentialPlus,
+      currentBonus: comboAnalytics.bonus,
+      maxBonus: comboAnalytics.maxBonus,
+      absoluteMaxBonus: comboAnalytics.absoluteMaxBonus,
+      primaryReason: comboAnalytics.primaryReason,
+      reasons: comboAnalytics.reasons,
+      actions: comboAnalytics.actions,
+    },
+  ];
+
+  // Сортировка: самая большая потеря первой
+  const sortedLosses = [...items]
+    .filter((i) => i.loss > 0.009)
+    .sort((a, b) => b.loss - a.loss);
+
+  const totalLoss = roundMoney(items.reduce((s, i) => s + i.loss, 0));
+  const totalPotential = totalLoss; // без двойного учёта
+  const bonus = roundMoney(
+    kpiAnalytics.reduce((s, k) => s + k.bonus, 0) + comboAnalytics.bonus
+  );
+  const maxAtCurrentCoeffs = roundMoney(
+    kpiAnalytics.reduce((s, k) => s + k.maxBonus, 0) + comboAnalytics.maxBonus
+  );
+  const absoluteMax = roundMoney(
+    kpiAnalytics.reduce((s, k) => s + k.absoluteMaxBonus, 0) + comboAnalytics.absoluteMaxBonus
+  );
+
+  const mainCause = sortedLosses[0] || null;
+
+  return {
+    kpiAnalytics,
+    comboAnalytics,
+    items,
+    sortedLosses,
+    totalLoss,
+    totalPotential,
+    bonus,
+    maxAtCurrentCoeffs,
+    absoluteMax,
+    mainCause,
   };
 }
 
@@ -162,10 +675,12 @@ function calculateSingleEconomyKpi(def, baseAmount, plan, fact, creditCoeff, att
   }
 
   const bonus = roundMoney(baseAmount * firstCoeff * efficiencyCoeff);
-  const maxBonus = roundMoney(getMaxEconomyBonus(baseAmount, def.usesCredit, def.usesAttachment));
-  const loss = roundMoney(Math.max(0, maxBonus - bonus));
+  // Максимум при текущем Кредиты/аттачменте и эффективности ×1,2
+  const maxBonus = calculateMaximumBonus(baseAmount, firstCoeff);
+  const absoluteMaxBonus = calculateAbsoluteMaximumBonus(baseAmount);
+  const loss = calculateLoss(bonus, absoluteMaxBonus);
   const potentialPlus = loss;
-  const nextThreshold = getNextEfficiencyThreshold(completion);
+  const nextThreshold = getNextThreshold('efficiency', completion);
 
   return {
     id: def.id,
@@ -184,6 +699,7 @@ function calculateSingleEconomyKpi(def, baseAmount, plan, fact, creditCoeff, att
     efficiencyCoeff,
     bonus,
     maxBonus,
+    absoluteMaxBonus,
     loss,
     potentialPlus,
     nextThreshold,
@@ -191,12 +707,16 @@ function calculateSingleEconomyKpi(def, baseAmount, plan, fact, creditCoeff, att
 }
 
 /**
- * Экономический блок (все KPI + Комбо).
+ * Экономический блок (все KPI + Комбо + аналитика потерь).
  */
 function calculateEconomyKpi(monthData) {
   const grade = getGrade(monthData.grade);
   const creditCoeff = getCreditCoefficient(monthData.creditPlanPercent);
   const attachmentCoeff = getAttachmentCoefficient(monthData.attachment);
+  const context = {
+    creditPlanPercent: Number(monthData.creditPlanPercent) || 0,
+    attachment: Number(monthData.attachment) || 0,
+  };
 
   const kpis = economyKpiDefs.map((def) => {
     const baseAmount = grade.economy[def.baseKey] || 0;
@@ -212,19 +732,23 @@ function calculateEconomyKpi(monthData) {
   });
 
   const combo = calculateComboBonus(monthData.salonsTotal, monthData.salonsComboDone);
-  const kpisBonus = roundMoney(kpis.reduce((sum, k) => sum + k.bonus, 0));
-  const kpisMax = roundMoney(kpis.reduce((sum, k) => sum + k.maxBonus, 0));
-  const kpisLoss = roundMoney(kpis.reduce((sum, k) => sum + k.loss, 0));
+  const analytics = calculateEconomyAnalytics(kpis, combo, context);
+
+  // Обогащаем KPI данными аналитики для UI
+  const enrichedKpis = analytics.kpiAnalytics;
 
   return {
     creditCoeff,
     attachmentCoeff,
-    kpis,
-    combo,
-    bonus: roundMoney(kpisBonus + combo.bonus),
-    maxBonus: roundMoney(kpisMax + combo.bonus),
-    loss: kpisLoss,
-    potentialPlus: kpisLoss,
+    kpis: enrichedKpis,
+    combo: analytics.comboAnalytics,
+    analytics,
+    bonus: analytics.bonus,
+    // Для глобального «макс. зарплата» — абсолютный максимум экономики
+    maxBonus: analytics.absoluteMax,
+    maxBonusAtCurrentCoeffs: analytics.maxAtCurrentCoeffs,
+    loss: analytics.totalLoss,
+    potentialPlus: analytics.totalPotential,
   };
 }
 
@@ -581,6 +1105,51 @@ function runSelfChecks() {
   // Лимит продаж
   const capped = Math.min(9000, 10000);
   check('Лимит продаж 10000→9000', capped, 9000);
+
+  // Максимум при текущем коэффициенте Кредитов (не всегда ×1.1)
+  check('Макс при Кредитах 0.8', calculateMaximumBonus(6000, 0.8), 5760);
+  check('Макс при Кредитах 1.1', calculateMaximumBonus(6000, 1.1), 7920);
+
+  // Аналитика без двойного учёта: C=0.8, E=0.9
+  // current = 6000*0.8*0.9 = 4320
+  // absolute = 6000*1.1*1.2 = 7920
+  // total loss = 3600 (не сумма факторных потерь)
+  const sampleKpi = calculateSingleEconomyKpi(
+    economyKpiDefs[0],
+    6000,
+    100000,
+    90000,
+    0.8,
+    1.0
+  );
+  check('Текущий бонус C0.8 E0.9', sampleKpi.bonus, 4320);
+  check('Макс при текущем C', sampleKpi.maxBonus, 5760);
+  check('Абс. макс', sampleKpi.absoluteMaxBonus, 7920);
+  check('Потеря без двойного учёта', sampleKpi.loss, 3600);
+
+  const analytics = buildKpiAnalytics(sampleKpi, {
+    creditPlanPercent: 95,
+    attachment: 3.0,
+  });
+  const factorSum = analytics.efficiencyFactor.loss + analytics.firstFactor.loss;
+  check('Факторы НЕ равны итоговой потере', factorSum === analytics.loss ? 1 : 0, 0);
+  check('Итоговая потеря аналитики', analytics.loss, 3600);
+  check('Плюс от Кредитов при текущей E', analytics.firstFactor.nextGain, 1080);
+
+  // Комбо потери
+  const comboZero = buildComboAnalytics(calculateComboBonus(5, 0));
+  check('Комбо 0 выполнивших бонус', comboZero.bonus, 0);
+  check('Комбо 0 выполнивших потеря', comboZero.loss, 10000);
+  const comboFull = buildComboAnalytics(calculateComboBonus(5, 5));
+  check('Комбо все выполнили потеря', comboFull.loss, 0);
+
+  // Продажи: удалённые позиции отсутствуют
+  const removed = ['insuranceMmbNoCombo', 'repairAccept', 'stolotoTickets'];
+  check(
+    'Удалённые позиции продаж',
+    removed.every((id) => !salesProducts.some((p) => p.id === id)) ? 1 : 0,
+    1
+  );
 
   const failed = results.filter((r) => !r.ok);
   console.group('RTT Calculator self-checks');

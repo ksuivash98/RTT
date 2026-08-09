@@ -360,13 +360,21 @@ function renderSalesResults(result) {
 
 function renderEconomyResults(result) {
   const economy = result.economy;
+  const analytics = economy.analytics;
 
   document.getElementById('coeffRow').innerHTML = `
     <span class="pill is-neutral">Кредиты ×${formatCoeff(economy.creditCoeff)}</span>
     <span class="pill is-neutral">Аттачмент ×${formatCoeff(economy.attachmentCoeff)}</span>
   `;
 
-  const combo = economy.combo;
+  renderComboAnalytics(economy.combo);
+  renderEconomyKpiAnalytics(economy.kpis);
+  renderWhyLosing(analytics);
+  renderEconomySummary(economy, analytics);
+}
+
+function renderComboAnalytics(combo) {
+  const lossClass = combo.loss > 0 ? 'is-negative' : 'is-positive';
   document.getElementById('comboCard').innerHTML = `
     <div class="result-item">
       <span class="label">Салонов в подчинении</span>
@@ -381,98 +389,323 @@ function renderEconomyResults(result) {
       <div class="value">${combo.salonsNotDone}</div>
     </div>
     <div class="result-item is-brand">
-      <span class="label">Бонус Комбо</span>
+      <span class="label">🟢 Бонус Комбо</span>
       <div class="value">${formatMoney(combo.bonus)}</div>
-    </div>`;
+    </div>
+    <div class="result-item is-positive">
+      <span class="label">Максимум</span>
+      <div class="value">${formatMoney(combo.maxBonus)}</div>
+    </div>
+    <div class="result-item ${lossClass}">
+      <span class="label">${combo.loss > 0 ? '🔴 Потеря' : '🟢 Потеря'}</span>
+      <div class="value">${combo.loss > 0 ? '−' : ''}${formatMoney(combo.loss)}</div>
+    </div>
+    <div class="result-item is-warning">
+      <span class="label">🟡 Можно получить</span>
+      <div class="value">+${formatMoney(combo.potentialPlus)}</div>
+    </div>
+    ${
+      combo.primaryReason
+        ? `<div class="result-item ${
+            combo.primaryReason.severity === 'positive' ? 'is-positive' : 'is-negative'
+          }" style="flex:1 1 100%">
+            <span class="label">Причина</span>
+            <div class="value" style="font-size:0.95rem;font-weight:700">${escapeHtml(
+              combo.primaryReason.summary
+            )}</div>
+          </div>`
+        : ''
+    }`;
+}
 
-  economy.kpis.forEach((kpi) => {
+function renderProgressBar(percent) {
+  const capped = Math.min(120, Math.max(0, Number(percent) || 0));
+  const width = Math.min(100, (capped / 120) * 100);
+  let tone = 'is-negative';
+  if (capped >= 120) tone = 'is-positive';
+  else if (capped >= 85) tone = 'is-warning';
+  else if (capped >= 75) tone = 'is-warning';
+
+  return `
+    <div class="progress-wrap ${tone}">
+      <div class="progress-meta">
+        <span>Выполнение ${formatPercent(percent)}</span>
+        <span>${formatPercent(Math.min(capped, 120), 0)} / 120%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:${width}%"></div>
+        <span class="progress-mark" style="left:62.5%" title="75%"></span>
+        <span class="progress-mark" style="left:70.83%" title="85%"></span>
+        <span class="progress-mark is-end" style="left:100%" title="120%"></span>
+      </div>
+    </div>`;
+}
+
+function renderFactorBlock(title, factor, extraHtml = '') {
+  if (!factor) return '';
+  const hasLoss = factor.loss > 0.009;
+  return `
+    <div class="factor-card ${hasLoss ? 'is-negative' : 'is-positive'}">
+      <h4>${hasLoss ? '🔴' : '🟢'} ${escapeHtml(title)}</h4>
+      <div class="factor-grid">
+        <div><span class="label">Текущий коэфф.</span><strong>×${formatCoeff(factor.currentCoeff)}</strong></div>
+        <div><span class="label">Макс. коэфф.</span><strong>×${formatCoeff(factor.maxCoeff)}</strong></div>
+        <div><span class="label">${hasLoss ? 'Влияние на бонус' : 'Статус'}</span>
+          <strong>${hasLoss ? '−' + formatMoney(factor.loss) : 'Ок'}</strong>
+        </div>
+        ${
+          factor.next && factor.next.nextThreshold != null
+            ? `<div><span class="label">След. порог</span><strong>${
+                typeof factor.next.nextThreshold === 'number' && factor.next.nextThreshold >= 10
+                  ? formatPercent(factor.next.nextThreshold, 0)
+                  : formatNumber(factor.next.nextThreshold, 2)
+              }</strong></div>
+              <div><span class="label">След. коэфф.</span><strong>×${formatCoeff(
+                factor.next.nextCoefficient
+              )}</strong></div>
+              <div><span class="label">🟡 Ближайший плюс</span><strong>+${formatMoney(
+                factor.nextGain
+              )}</strong></div>`
+            : `<div><span class="label">Порог</span><strong>Достигнут</strong></div>`
+        }
+      </div>
+      ${extraHtml}
+    </div>`;
+}
+
+function renderEconomyKpiAnalytics(kpis) {
+  kpis.forEach((kpi) => {
     const completionEl = document.querySelector(`[data-kpi-completion="${kpi.id}"]`);
     if (completionEl) {
+      const tone =
+        kpi.loss < 0.01
+          ? 'is-positive'
+          : kpi.completion < 75
+            ? 'is-negative'
+            : kpi.completion >= 100
+              ? 'is-warning'
+              : 'is-negative';
       completionEl.textContent = `Выполнение ${formatPercent(kpi.completion)}`;
-      completionEl.className = `pill ${
-        kpi.completion >= 100 ? 'is-positive' : kpi.completion >= 85 ? 'is-warning' : 'is-negative'
-      }`;
+      completionEl.className = `pill ${tone}`;
     }
 
     const metrics = document.querySelector(`[data-kpi-metrics="${kpi.id}"]`);
     if (!metrics) return;
 
-    metrics.innerHTML = `
-      <div class="kpi-metric">
-        <span class="label">Базовая сумма</span>
-        <span class="value">${formatMoney(kpi.baseAmount)}</span>
-      </div>
-      <div class="kpi-metric">
-        <span class="label">${kpi.usesCredit ? 'Кредиты' : kpi.usesAttachment ? 'Аттачмент' : 'Коэфф.'}</span>
-        <span class="value">×${formatCoeff(kpi.firstCoeff)}</span>
-      </div>
-      <div class="kpi-metric">
-        <span class="label">Эффективность</span>
-        <span class="value">×${formatCoeff(kpi.efficiencyCoeff)}</span>
-      </div>
-      <div class="kpi-metric is-brand">
-        <span class="label">🟢 Итог</span>
-        <span class="value">${formatMoney(kpi.bonus)}</span>
-      </div>
-      <div class="kpi-metric is-positive">
-        <span class="label">Максимум</span>
-        <span class="value">${formatMoney(kpi.maxBonus)}</span>
-      </div>
-      <div class="kpi-metric is-negative">
-        <span class="label">🔴 Потеря</span>
-        <span class="value">${formatMoney(kpi.loss)}</span>
-      </div>
-      <div class="kpi-metric is-warning">
-        <span class="label">🟡 Можно получить</span>
-        <span class="value">${formatMoney(kpi.potentialPlus)}</span>
-      </div>
-      <div class="kpi-metric">
-        <span class="label">След. порог</span>
-        <span class="value">${
-          kpi.nextThreshold.nextThreshold == null
-            ? 'Достигнут'
-            : `${formatPercent(kpi.nextThreshold.nextThreshold, 0)} (+${formatNumber(
-                kpi.nextThreshold.percentNeeded,
-                1
-              )} п.п.)`
-        }</span>
-      </div>`;
-  });
+    const firstTitle = kpi.usesCredit ? 'Кредиты' : 'Аттачмент';
+    const firstExtra =
+      kpi.firstFactor && kpi.firstFactor.kind === 'attachment'
+        ? `<p class="factor-note">Текущий аттачмент: <strong>${formatNumber(
+            kpi.firstFactor.inputValue,
+            2
+          )}</strong>. Максимальный уровень: 3,6 (×1,1).</p>`
+        : kpi.firstFactor && kpi.firstFactor.kind === 'credit'
+          ? `<p class="factor-note">Выполнение доли кредитов: <strong>${formatPercent(
+              kpi.firstFactor.inputValue
+            )}</strong>. Максимум коэффициента при ≥110%.</p>`
+          : '';
 
+    const reasonsHtml = (kpi.reasons || [])
+      .map((r) => {
+        const icon = r.severity === 'positive' ? '🟢' : r.severity === 'critical' ? '🔴' : r.amount > 0 ? '🔴' : '🟡';
+        return `<div class="reason-line ${
+          r.severity === 'positive' ? 'is-positive' : r.amount > 0 ? 'is-negative' : 'is-warning'
+        }">
+          <div class="reason-title">${icon} ${escapeHtml(r.title)}</div>
+          <div class="reason-text">${escapeHtml(r.text)}</div>
+          ${r.amount > 0 ? `<div class="reason-amount">−${formatMoney(r.amount)}</div>` : ''}
+        </div>`;
+      })
+      .join('');
+
+    const actionsHtml = (kpi.actions || [])
+      .map(
+        (a) => `
+        <div class="action-card">
+          <div class="action-title">Что сделать: ${escapeHtml(a.title)}</div>
+          <div class="action-grid">
+            <div><span class="label">Сейчас</span><strong>${escapeHtml(a.currentLabel)}</strong></div>
+            <div><span class="label">Следующий порог</span><strong>${escapeHtml(a.nextLabel)}</strong></div>
+            <div><span class="label">Нужно</span><strong>${escapeHtml(a.needLabel)}</strong></div>
+            <div><span class="label">🟡 Плюс</span><strong>+${formatMoney(a.potentialPlus)}</strong></div>
+          </div>
+          <p class="factor-note">${escapeHtml(a.detail)}</p>
+        </div>`
+      )
+      .join('');
+
+    metrics.innerHTML = `
+      ${renderProgressBar(kpi.completion)}
+      <div class="kpi-metrics-grid">
+        <div class="kpi-metric">
+          <span class="label">Базовая сумма</span>
+          <span class="value">${formatMoney(kpi.baseAmount)}</span>
+        </div>
+        <div class="kpi-metric">
+          <span class="label">${firstTitle}</span>
+          <span class="value">×${formatCoeff(kpi.firstCoeff)}</span>
+        </div>
+        <div class="kpi-metric">
+          <span class="label">Эффективность</span>
+          <span class="value">×${formatCoeff(kpi.efficiencyCoeff)}</span>
+        </div>
+        <div class="kpi-metric is-brand">
+          <span class="label">🟢 Текущий бонус</span>
+          <span class="value">${formatMoney(kpi.bonus)}</span>
+        </div>
+        <div class="kpi-metric is-positive">
+          <span class="label">Максимум при текущем ${firstTitle.toLowerCase()}</span>
+          <span class="value">${formatMoney(kpi.maxBonus)}</span>
+        </div>
+        <div class="kpi-metric">
+          <span class="label">Абсолютный максимум</span>
+          <span class="value">${formatMoney(kpi.absoluteMaxBonus)}</span>
+        </div>
+        <div class="kpi-metric is-negative">
+          <span class="label">🔴 Общая потеря</span>
+          <span class="value">−${formatMoney(kpi.loss)}</span>
+        </div>
+        <div class="kpi-metric is-warning">
+          <span class="label">🟡 Можно получить</span>
+          <span class="value">+${formatMoney(kpi.potentialPlus)}</span>
+        </div>
+      </div>
+
+      <div class="breakdown-title">Из-за чего потеряно</div>
+      <div class="reasons-list">${reasonsHtml || '<p class="factor-note">Потерь нет</p>'}</div>
+
+      <div class="factors-row">
+        ${renderFactorBlock('Эффективность', kpi.efficiencyFactor)}
+        ${renderFactorBlock(firstTitle, kpi.firstFactor, firstExtra)}
+      </div>
+
+      ${
+        actionsHtml
+          ? `<div class="breakdown-title">Что сделать</div><div class="actions-list">${actionsHtml}</div>`
+          : ''
+      }`;
+
+    // Растягиваем контейнер метрик на полную ширину карточки
+    metrics.classList.add('kpi-analytics');
+  });
+}
+
+function renderWhyLosing(analytics) {
+  const root = document.getElementById('economyWhyLosing');
+  if (!root || !analytics) return;
+
+  const rows = analytics.sortedLosses.length
+    ? analytics.sortedLosses
+        .map(
+          (item, index) => `
+        <div class="why-row">
+          <div class="why-rank">${index + 1}</div>
+          <div class="why-body">
+            <div class="why-title">🔴 ${escapeHtml(item.name)}</div>
+            <div class="why-reason">${escapeHtml(item.primaryReason?.summary || 'Есть потеря')}</div>
+            ${
+              item.primaryReason?.detail
+                ? `<div class="why-detail">${escapeHtml(item.primaryReason.detail)}</div>`
+                : ''
+            }
+          </div>
+          <div class="why-amount">−${formatMoney(item.loss)}</div>
+        </div>`
+        )
+        .join('')
+    : `<div class="why-row is-ok">
+        <div class="why-body">
+          <div class="why-title">🟢 Потерь в экономическом блоке нет</div>
+          <div class="why-reason">Все показатели на максимуме</div>
+        </div>
+      </div>`;
+
+  root.innerHTML = `
+    <div class="why-losing-card">
+      <div class="why-losing-head">
+        <h3>Из-за чего я теряю деньги</h3>
+        <p>Отсортировано по размеру потери — сначала самое важное</p>
+      </div>
+      <div class="why-list">${rows}</div>
+      <div class="why-totals">
+        <div class="kpi-metric is-negative">
+          <span class="label">Общие потери экономического блока</span>
+          <span class="value">−${formatMoney(analytics.totalLoss)}</span>
+        </div>
+        <div class="kpi-metric is-warning">
+          <span class="label">💰 Можно дополнительно получить</span>
+          <span class="value">+${formatMoney(analytics.totalPotential)}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderEconomySummary(economy, analytics) {
+  const main = analytics?.mainCause;
   document.getElementById('economyResultStrip').innerHTML = `
     <div class="result-item is-brand">
       <span class="label">🟢 Бонус экономики</span>
       <div class="value">${formatMoney(economy.bonus)}</div>
     </div>
     <div class="result-item is-positive">
-      <span class="label">Максимум</span>
+      <span class="label">Максимум (при текущих коэфф.)</span>
+      <div class="value">${formatMoney(economy.maxBonusAtCurrentCoeffs)}</div>
+    </div>
+    <div class="result-item">
+      <span class="label">Абсолютный максимум</span>
       <div class="value">${formatMoney(economy.maxBonus)}</div>
     </div>
     <div class="result-item is-negative">
       <span class="label">🔴 Потеря</span>
-      <div class="value">${formatMoney(economy.loss)}</div>
+      <div class="value">−${formatMoney(economy.loss)}</div>
     </div>
     <div class="result-item is-warning">
-      <span class="label">🟡 Можно получить</span>
-      <div class="value">${formatMoney(economy.potentialPlus)}</div>
-    </div>`;
+      <span class="label">🟡 Можно дополнительно получить</span>
+      <div class="value">+${formatMoney(economy.potentialPlus)}</div>
+    </div>
+    ${
+      main
+        ? `<div class="result-item is-negative" style="flex:1 1 100%">
+            <span class="label">Основная причина потерь</span>
+            <div class="value" style="font-size:1rem">
+              ${escapeHtml(main.name)} · +${formatMoney(main.potentialPlus)}
+            </div>
+          </div>`
+        : `<div class="result-item is-positive" style="flex:1 1 100%">
+            <span class="label">Основная причина потерь</span>
+            <div class="value" style="font-size:1rem">Нет — блок на максимуме</div>
+          </div>`
+    }`;
 }
 
 function renderLosses(result) {
-  const rows = [];
+  const economyRows = (result.economy.analytics?.kpiAnalytics || result.economy.kpis).map((kpi) => ({
+    title: kpi.name,
+    completion: kpi.completion,
+    efficiency: kpi.efficiencyCoeff,
+    current: kpi.bonus,
+    next: kpi.nextThreshold?.nextThreshold ?? null,
+    needed: kpi.nextThreshold?.percentNeeded ?? null,
+    max: kpi.maxBonus,
+    plus: kpi.potentialPlus,
+    reason: kpi.primaryReason?.summary || '',
+  }));
 
-  result.economy.kpis.forEach((kpi) => {
-    rows.push({
-      title: kpi.name,
-      completion: kpi.completion,
-      efficiency: kpi.efficiencyCoeff,
-      current: kpi.bonus,
-      next: kpi.nextThreshold.nextThreshold,
-      needed: kpi.nextThreshold.percentNeeded,
-      max: kpi.maxBonus,
-      plus: kpi.potentialPlus,
+  if (result.economy.combo) {
+    economyRows.push({
+      title: 'Комбо 40%+',
+      completion: null,
+      efficiency: null,
+      current: result.economy.combo.bonus,
+      next: null,
+      needed: null,
+      max: result.economy.combo.maxBonus,
+      plus: result.economy.combo.potentialPlus,
+      reason: result.economy.combo.primaryReason?.summary || '',
     });
-  });
+  }
+
+  const rows = [...economyRows];
 
   rows.push({
     title: 'Бонус за продажи',
@@ -483,6 +716,7 @@ function renderLosses(result) {
     needed: null,
     max: result.sales.maxBonus,
     plus: result.sales.potentialPlus,
+    reason: '',
   });
 
   if (result.administrative.items.length) {
@@ -496,6 +730,7 @@ function renderLosses(result) {
         needed: null,
         max: item.maxBonus,
         plus: item.potentialPlus,
+        reason: '',
       });
     });
   }
@@ -511,6 +746,7 @@ function renderLosses(result) {
         needed: null,
         max: item.maxBonus,
         plus: item.potentialPlus,
+        reason: '',
       });
     });
   }
@@ -522,6 +758,7 @@ function renderLosses(result) {
           (r) => `
         <article class="loss-card">
           <h3>${escapeHtml(r.title)}</h3>
+          ${r.reason ? `<p class="kpi-note">${escapeHtml(r.reason)}</p>` : ''}
           <div class="loss-metrics">
             ${
               r.completion == null
@@ -530,9 +767,13 @@ function renderLosses(result) {
                     r.completion
                   )}</span></div>`
             }
-            <div class="kpi-metric"><span class="label">Коэффициент</span><span class="value">×${formatCoeff(
-              r.efficiency
-            )}</span></div>
+            ${
+              r.efficiency == null
+                ? ''
+                : `<div class="kpi-metric"><span class="label">Коэффициент</span><span class="value">×${formatCoeff(
+                    r.efficiency
+                  )}</span></div>`
+            }
             <div class="kpi-metric is-brand"><span class="label">🟢 Текущий бонус</span><span class="value">${formatMoney(
               r.current
             )}</span></div>
