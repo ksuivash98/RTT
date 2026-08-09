@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Калькулятор ЗП руководителя РТТ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">РТТ</div>
+        <div class="brand-text">
+          <h1>Калькулятор зарплаты</h1>
+          <p>Руководитель РТТ · помесячный расчёт</p>
+        </div>
+      </div>
+      <div class="header-meta" id="headerPeriodLabel"></div>
+    </header>
+
+    <!-- Аналитические карточки -->
+    <section class="analytics-grid" id="analyticsCards" aria-label="Общая аналитика"></section>
+
+    <!-- 1. Сотрудник и период -->
+    <section class="panel" id="section-employee">
+      <div class="panel-head">
+        <h2>Сотрудник и период</h2>
+        <p>Данные каждого руководителя и месяца хранятся отдельно</p>
+      </div>
+
+      <div class="employee-layout">
+        <div class="employee-sidebar">
+          <label class="field">
+            <span>Поиск сотрудника</span>
+            <input type="search" id="employeeSearch" placeholder="ФИО..." autocomplete="off" />
+          </label>
+          <ul class="employee-list" id="employeeList"></ul>
+          <div class="employee-actions">
+            <button type="button" class="btn btn-primary" id="btnAddEmployee">Создать</button>
+            <button type="button" class="btn btn-ghost" id="btnEditEmployee">Изменить</button>
+            <button type="button" class="btn btn-danger" id="btnDeleteEmployee">Удалить</button>
+          </div>
+        </div>
+
+        <div class="employee-main">
+          <div class="form-grid form-grid-3">
+            <label class="field">
+              <span>ФИО руководителя</span>
+              <input type="text" id="employeeName" placeholder="Иванов Иван Иванович" />
+            </label>
+            <label class="field">
+              <span>Месяц</span>
+              <select id="monthSelect"></select>
+            </label>
+            <label class="field">
+              <span>Год</span>
+              <select id="yearSelect"></select>
+            </label>
+          </div>
+          <div class="periods-box">
+            <h3>Сохранённые периоды</h3>
+            <div class="periods-chips" id="periodsChips"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Окладная часть -->
+    <section class="panel" id="section-salary">
+      <div class="panel-head">
+        <h2>Окладная часть</h2>
+        <p>Оклад зависит только от грейда, без учёта часов</p>
+      </div>
+
+      <div class="grade-grid" id="gradeSelector"></div>
+
+      <div class="salary-summary" id="salarySummary"></div>
+    </section>
+
+    <!-- 3. Бонус за продажи -->
+    <section class="panel" id="section-sales">
+      <div class="panel-head">
+        <h2>Бонус за продажи</h2>
+        <p>Только колонка «Стандарт» · максимум 9 000 ₽ после сезонности</p>
+      </div>
+
+      <div class="seasonality-bar" id="seasonalityBar"></div>
+
+      <h3 class="subhead">Продажи</h3>
+      <div class="table-wrap">
+        <table class="data-table" id="salesProductsTable">
+          <thead>
+            <tr>
+              <th>Показатель</th>
+              <th>Ставка</th>
+              <th>Сумма продаж</th>
+              <th>Бонус</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <h3 class="subhead">Операторский блок продаж</h3>
+      <div class="table-wrap">
+        <table class="data-table" id="operatorSalesTable">
+          <thead>
+            <tr>
+              <th>Показатель</th>
+              <th>Ставка</th>
+              <th>Кол-во / Сумма</th>
+              <th>Бонус</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="result-strip" id="salesResultStrip"></div>
+    </section>
+
+    <!-- 4. Экономический блок -->
+    <section class="panel" id="section-economy">
+      <div class="panel-head">
+        <h2>Бонус за экономический блок</h2>
+        <p>Сначала Кредиты / аттачмент, затем коэффициент эффективности</p>
+      </div>
+
+      <div class="form-grid form-grid-4">
+        <label class="field">
+          <span>Салонов в подчинении</span>
+          <input type="number" id="salonsTotal" min="0" step="1" />
+        </label>
+        <label class="field">
+          <span>Выполнили KPI Комбо 40%+</span>
+          <input type="number" id="salonsComboDone" min="0" step="1" />
+        </label>
+        <label class="field">
+          <span>Выполнение плана по доле кредитов, %</span>
+          <input type="number" id="creditPlanPercent" min="0" step="0.1" />
+        </label>
+        <label class="field">
+          <span>Аттачмент</span>
+          <input type="number" id="attachment" min="0" step="0.01" />
+        </label>
+      </div>
+
+      <div class="coeff-row" id="coeffRow"></div>
+      <div class="combo-card" id="comboCard"></div>
+
+      <div class="kpi-list" id="economyKpiList"></div>
+
+      <div id="economyWhyLosing" class="why-losing"></div>
+      <div class="result-strip" id="economyResultStrip"></div>
+    </section>
+
+    <!-- 5. Административный блок -->
+    <section class="panel" id="section-admin">
+      <div class="panel-head">
+        <h2>Бонус за административный блок</h2>
+        <p>Конфигурация administrativeRules — готова к расширению</p>
+      </div>
+      <div id="adminBlock" class="empty-config">
+        <p>Правила ещё не заданы. Добавьте KPI в <code>administrativeRules</code> в файле <code>data.js</code>.</p>
+      </div>
+    </section>
+
+    <!-- 6. Операторский блок -->
+    <section class="panel" id="section-operator">
+      <div class="panel-head">
+        <h2>Бонус за операторский блок</h2>
+        <p>Конфигурация operatorRules — готова к расширению</p>
+      </div>
+      <div id="operatorBlock" class="empty-config">
+        <p>Правила ещё не заданы. Добавьте KPI в <code>operatorRules</code> в файле <code>data.js</code>.</p>
+      </div>
+    </section>
+
+    <!-- 7. Чёрный список -->
+    <section class="panel" id="section-blacklist">
+      <div class="panel-head">
+        <h2>Чёрный список</h2>
+        <p>Конфигурация blackListRules — готова к расширению</p>
+      </div>
+      <div id="blackListBlock" class="empty-config">
+        <p>Условия ещё не заданы. Добавьте правила в <code>blackListRules</code> в файле <code>data.js</code>.</p>
+      </div>
+    </section>
+
+    <!-- 8. Потери и возможности -->
+    <section class="panel" id="section-losses">
+      <div class="panel-head">
+        <h2>Анализ потерь и возможностей</h2>
+        <p>Где теряются деньги и до какого порога осталось дойти</p>
+      </div>
+      <div id="lossesBlock"></div>
+    </section>
+
+    <!-- 9. Итоговая зарплата -->
+    <section class="panel panel-total" id="section-total">
+      <div class="panel-head">
+        <h2>Итоговая зарплата</h2>
+        <p>Оклад + бонусы − штрафы</p>
+      </div>
+      <div id="totalBlock"></div>
+    </section>
+
+    <footer class="app-footer">
+      <span>Данные автоматически сохраняются в LocalStorage</span>
+      <button type="button" class="btn btn-ghost btn-sm" id="btnRunChecks">Проверить формулы</button>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="data.js"></script>
+  <script src="calculator.js"></script>
+  <script src="storage.js"></script>
+  <script src="ui.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
