@@ -165,6 +165,7 @@ function mergeSalonsList(data, salonsTotal) {
     list.push({
       name: String(prev.name || ''),
       operator: operatorId,
+      photoPerformer: prev.photoPerformer === 'other' ? 'other' : 'manager',
       photoPassed: Boolean(prev.photoPassed),
       servicePassed: Boolean(prev.servicePassed),
       txvPassed: Boolean(prev.txvPassed),
@@ -218,16 +219,25 @@ function mergeAdministrativeData(raw, salonsList) {
   const list = Array.isArray(salonsList) ? salonsList : [];
 
   administrativeRules.forEach((rule) => {
-    if (rule.type === 'averageBudget') {
-      base[rule.id] = {
-        plan: Number(src[rule.id]?.plan) || 0,
-        fact: Number(src[rule.id]?.fact) || 0,
-      };
+    if (rule.type === 'binaryDone') {
+      const row = src[rule.id] || {};
+      let passed = false;
+      if (typeof row.passed === 'boolean') {
+        passed = row.passed;
+      } else {
+        // Миграция со старых план/факт: полное выполнение → выполнено
+        const plan = Number(row.plan) || 0;
+        const fact = Number(row.fact) || 0;
+        passed = plan > 0 && fact >= plan;
+      }
+      base[rule.id] = { passed };
     }
   });
 
   // Счётчики синхронизируются из флагов салонов (формулы используют те же числа)
-  base.photoReportPassed = list.filter((s) => s.photoPassed).length;
+  base.photoReportPassed = list.filter(
+    (s) => (s.photoPerformer || 'manager') === 'manager' && s.photoPassed
+  ).length;
   base.servicePassed = list.filter((s) => s.servicePassed).length;
   base.txvPassed = list.filter((s) => s.txvPassed).length;
   return base;

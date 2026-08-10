@@ -829,12 +829,9 @@ function calculateAdministrativeBonus(monthData) {
   const items = [];
 
   administrativeRules.forEach((rule) => {
-    if (rule.type === 'averageBudget') {
-      const plan = Number(admin[rule.id]?.plan) || 0;
-      const fact = Number(admin[rule.id]?.fact) || 0;
-      const completion = calcCompletionPercent(plan, fact);
-      const ratio = plan > 0 ? Math.min(1, fact / plan) : 0;
-      const bonus = roundMoney(rule.budget * ratio);
+    if (rule.type === 'binaryDone') {
+      const passed = Boolean(admin[rule.id]?.passed);
+      const bonus = passed ? rule.budget : 0;
       const maxBonus = rule.budget;
       const loss = calculateLoss(bonus, maxBonus);
 
@@ -842,11 +839,12 @@ function calculateAdministrativeBonus(monthData) {
         id: rule.id,
         name: rule.name,
         type: rule.type,
-        plan,
-        fact,
-        completion,
-        passed: null,
-        failed: null,
+        plan: null,
+        fact: null,
+        completion: passed ? 100 : 0,
+        done: passed,
+        passed: passed ? 1 : 0,
+        failed: passed ? 0 : 1,
         bonus,
         maxBonus,
         loss,
@@ -856,17 +854,39 @@ function calculateAdministrativeBonus(monthData) {
     }
 
     if (rule.type === 'photoReport') {
-      let passed = Math.max(0, Math.floor(Number(admin.photoReportPassed) || 0));
-      if (passed > salonsTotal) passed = salonsTotal;
-      const failed = Math.max(0, salonsTotal - passed);
-      const bonus = roundMoney(passed * rule.passBonus - failed * rule.failPenalty);
+      let managerPassed = 0;
+      let managerFailed = 0;
+      let otherCount = 0;
+      const salonStatuses = salonsList.map((salon, index) => {
+        const performer = salon.photoPerformer === 'other' ? 'other' : 'manager';
+        const done = Boolean(salon.photoPassed);
+        let amount = 0;
+        if (performer === 'manager') {
+          if (done) {
+            managerPassed += 1;
+            amount = rule.passBonus;
+          } else {
+            managerFailed += 1;
+            amount = -rule.failPenalty;
+          }
+        } else {
+          otherCount += 1;
+          amount = 0;
+        }
+        return {
+          index,
+          title: getSalonDisplayName(salon, index),
+          performer,
+          passed: done,
+          amount,
+        };
+      });
+
+      const bonus = roundMoney(
+        managerPassed * rule.passBonus - managerFailed * rule.failPenalty
+      );
       const maxBonus = roundMoney(salonsTotal * rule.passBonus);
       const loss = calculateLoss(bonus, maxBonus);
-      const salonStatuses = salonsList.map((salon, index) => ({
-        index,
-        title: getSalonDisplayName(salon, index),
-        passed: Boolean(salon.photoPassed),
-      }));
 
       items.push({
         id: rule.id,
@@ -874,9 +894,11 @@ function calculateAdministrativeBonus(monthData) {
         type: rule.type,
         plan: null,
         fact: null,
-        completion: salonsTotal > 0 ? (passed / salonsTotal) * 100 : 0,
-        passed,
-        failed,
+        completion:
+          salonsTotal > 0 ? (managerPassed / salonsTotal) * 100 : 0,
+        passed: managerPassed,
+        failed: managerFailed,
+        otherCount,
         salonsTotal,
         salonStatuses,
         bonus,
@@ -1524,13 +1546,14 @@ function runSelfChecks() {
   check('Сценарий5 бонус', r5.bonus, 10500);
 
   // МТС не входит в операторский блок
-  check('МТС исключён из Tele2', r5.tele2Salons, 2);
+  check('МТС исключён из T2', r5.tele2Salons, 2);
 
-  // Фотоотчёт: 10 салонов, 8 прошли → 14000
+  // Фотоотчёт: 10 салонов, 8 прошли руководителем → 14000
   const adm = createEmptyMonthData();
   adm.salonsTotal = 10;
   adm.salonsList = Array.from({ length: 10 }, () => createEmptySalon());
   adm.salonsList.forEach((s, i) => {
+    s.photoPerformer = 'manager';
     s.photoPassed = i < 8;
   });
   const admRes = calculateAdministrativeBonus(adm);
@@ -1539,6 +1562,79 @@ function runSelfChecks() {
 
   // Админ не зависит от эффективности экономики
   check('Админ независим', admRes.bonus >= 14000 ? 1 : 0, 1);
+
+  // Админ ТЕСТ 1: пункты 1–4
+  const adm1 = createEmptyMonthData();
+  adm1.administrative = {
+    recommendations: { passed: true },
+    cardShare: { passed: true },
+    dovChecklist: { passed: false },
+    monthlyTesting: { passed: true },
+  };
+  const adm1Res = calculateAdministrativeBonus(adm1);
+  check(
+    'Админ тест1 binary',
+    adm1Res.breakdown.recommendations +
+      adm1Res.breakdown.cardShare +
+      adm1Res.breakdown.dovChecklist +
+      adm1Res.breakdown.monthlyTesting,
+    5000
+  );
+
+  // Админ ТЕСТ 2: фотоотчёт пример ТЗ → +3000
+  const adm2 = createEmptyMonthData();
+  adm2.salonsTotal = 5;
+  adm2.salonsList = [
+    { ...createEmptySalon(), name: 'Березники', photoPerformer: 'manager', photoPassed: true },
+    { ...createEmptySalon(), name: 'Соликамск', photoPerformer: 'manager', photoPassed: false },
+    { ...createEmptySalon(), name: 'Кунгур', photoPerformer: 'other', photoPassed: true },
+    { ...createEmptySalon(), name: '', photoPerformer: 'other', photoPassed: false },
+    { ...createEmptySalon(), name: '', photoPerformer: 'manager', photoPassed: true },
+  ];
+  const adm2Photo = calculateAdministrativeBonus(adm2).items.find((i) => i.id === 'photoReport');
+  check('Админ тест2 фото', adm2Photo.bonus, 3000);
+
+  // Админ ТЕСТ 3: сервис 3×2000
+  const adm3 = createEmptyMonthData();
+  adm3.salonsTotal = 3;
+  adm3.salonsList = Array.from({ length: 3 }, () => {
+    const s = createEmptySalon();
+    s.servicePassed = true;
+    return s;
+  });
+  check(
+    'Админ тест3 сервис',
+    calculateAdministrativeBonus(adm3).breakdown.serviceBonus,
+    6000
+  );
+
+  // Админ ТЕСТ 4: ТхВ 2×2000
+  const adm4 = createEmptyMonthData();
+  adm4.salonsTotal = 2;
+  adm4.salonsList = Array.from({ length: 2 }, () => {
+    const s = createEmptySalon();
+    s.txvPassed = true;
+    return s;
+  });
+  check('Админ тест4 ТхВ', calculateAdministrativeBonus(adm4).breakdown.txvChecks, 4000);
+
+  // Админ ТЕСТ 5: все фото — другой сотрудник → 0
+  const adm5 = createEmptyMonthData();
+  adm5.salonsTotal = 4;
+  adm5.salonsList = Array.from({ length: 4 }, () => {
+    const s = createEmptySalon();
+    s.photoPerformer = 'other';
+    s.photoPassed = false;
+    return s;
+  });
+  check(
+    'Админ тест5 другой',
+    calculateAdministrativeBonus(adm5).items.find((i) => i.id === 'photoReport').bonus,
+    0
+  );
+
+  // Отображение T2
+  check('Отображение T2', getSalonOperatorLabel('tele2') === 'T2' ? 1 : 0, 1);
 
   // --- Чёрный список ---
   const blBase = () => {

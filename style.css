@@ -1273,6 +1273,22 @@ body {
   color: var(--negative);
 }
 
+.photo-salon-list {
+  display: grid;
+  gap: 12px;
+}
+
+.photo-salon-card {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.photo-salon-card .salon-flag {
+  margin-top: 10px;
+}
+
 .is-collapsible > .panel-head {
   display: none;
 }

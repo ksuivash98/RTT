@@ -191,33 +191,33 @@ const EFFICIENCY_THRESHOLDS = [
  * Административный блок.
  * НЕ использует эффективность / кредиты / аттачмент / сезонность экономики.
  *
- * type: 'averageBudget' — бонус = бюджет × min(1, факт/план)
- * type: 'photoReport' — (прошли×2000) − (не прошли×1000)
+ * type: 'binaryDone' — выполнено → полный бюджет, иначе 0
+ * type: 'photoReport' — руководитель: +2000 / −1000; другой сотрудник: 0
  * type: 'perSalonBonus' — выполнившие × ставка (без штрафа)
  */
 const administrativeRules = [
   {
     id: 'recommendations',
     name: 'Выполнение плана по рекомендациям (дошедшие на ПД)',
-    type: 'averageBudget',
+    type: 'binaryDone',
     budget: 3000,
   },
   {
     id: 'cardShare',
     name: 'Доля продаж по карте <= 25%',
-    type: 'averageBudget',
+    type: 'binaryDone',
     budget: 1000,
   },
   {
     id: 'dovChecklist',
     name: 'Чек-лист ДОВ',
-    type: 'averageBudget',
+    type: 'binaryDone',
     budget: 2000,
   },
   {
     id: 'monthlyTesting',
     name: 'Ежемесячное тестирование',
-    type: 'averageBudget',
+    type: 'binaryDone',
     budget: 1000,
   },
   {
@@ -242,7 +242,7 @@ const administrativeRules = [
 ];
 
 /**
- * KPI Tele2 для операторского блока (только TELE2).
+ * KPI T2 для операторского блока (только T2, id: tele2).
  * Каждый KPI имеет вес 1.
  */
 const operatorTele2Kpis = [
@@ -268,10 +268,10 @@ const operatorRules = [];
 
 /**
  * Операторы салона (идентификация).
- * В расчёте операторского блока участвует ТОЛЬКО Tele2.
+ * В расчёте операторского блока участвует ТОЛЬКО T2 (id: tele2).
  */
 const salonOperators = [
-  { id: 'tele2', name: 'Tele2' },
+  { id: 'tele2', name: 'T2' },
   { id: 'mts', name: 'МТС' },
   { id: 'megafon', name: 'МегаФон' },
   { id: 'beeline', name: 'Билайн' },
@@ -352,6 +352,7 @@ function createEmptySalon() {
   return {
     name: '',
     operator: 'tele2',
+    photoPerformer: 'manager',
     photoPassed: false,
     servicePassed: false,
     txvPassed: false,
@@ -361,7 +362,7 @@ function createEmptySalon() {
 }
 
 function getSalonOperatorLabel(operatorId) {
-  return salonOperators.find((o) => o.id === operatorId)?.name || 'Tele2';
+  return salonOperators.find((o) => o.id === operatorId)?.name || 'T2';
 }
 
 /** Отображаемое имя: «Березники» или «Салон №N». */
@@ -370,7 +371,7 @@ function getSalonDisplayName(salon, index) {
   return name || `Салон №${index + 1}`;
 }
 
-/** «Березники — Tele2» или «Салон №1 — МТС». */
+/** «Березники — T2» или «Салон №1 — МТС». */
 function getSalonTitle(salon, index) {
   return `${getSalonDisplayName(salon, index)} — ${getSalonOperatorLabel(salon?.operator)}`;
 }
@@ -382,8 +383,8 @@ function createEmptyAdministrativeData() {
     txvPassed: 0,
   };
   administrativeRules.forEach((rule) => {
-    if (rule.type === 'averageBudget') {
-      data[rule.id] = { plan: 0, fact: 0 };
+    if (rule.type === 'binaryDone') {
+      data[rule.id] = { passed: false };
     }
   });
   return data;

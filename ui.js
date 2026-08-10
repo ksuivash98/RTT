@@ -65,12 +65,11 @@ function renderGradeSelector(activeGrade) {
 }
 
 function renderEmployeeList() {
-  const query = document.getElementById('employeeSearch').value;
-  const list = searchEmployees(UI.store, query);
+  const list = UI.store.employees || [];
   const root = document.getElementById('employeeList');
 
   if (!list.length) {
-    root.innerHTML = '<li><button type="button" disabled>Никого не найдено</button></li>';
+    root.innerHTML = '<li><button type="button" disabled>Нет сотрудников</button></li>';
     return;
   }
 
@@ -398,43 +397,56 @@ function renderAdminBlock(data) {
   const admin = data.administrative || createEmptyAdministrativeData();
   const list = data.salonsList || [];
 
-  const averageCards = administrativeRules
-    .filter((r) => r.type === 'averageBudget')
+  const binaryCards = administrativeRules
+    .filter((r) => r.type === 'binaryDone')
     .map((rule) => {
-      const row = admin[rule.id] || { plan: 0, fact: 0 };
+      const passed = Boolean(admin[rule.id]?.passed);
       return `
         <article class="kpi-card" data-admin-id="${rule.id}">
           <div class="kpi-card-head">
             <h3>${escapeHtml(rule.name)}</h3>
             <span class="pill is-neutral">Бюджет ${formatMoney(rule.budget)}</span>
           </div>
-          <div class="kpi-inputs">
-            <label class="field">
-              <span>План</span>
-              <input type="number" min="0" step="0.01" data-admin-plan="${rule.id}" value="${row.plan}" />
-            </label>
-            <label class="field">
-              <span>Факт</span>
-              <input type="number" min="0" step="0.01" data-admin-fact="${rule.id}" value="${row.fact}" />
-            </label>
-          </div>
+          <label class="field">
+            <span>Результат</span>
+            <select data-admin-done="${rule.id}">
+              <option value="1" ${passed ? 'selected' : ''}>✅ Выполнено</option>
+              <option value="0" ${!passed ? 'selected' : ''}>❌ Не выполнено</option>
+            </select>
+          </label>
           <div class="kpi-metrics" data-admin-metrics="${rule.id}"></div>
         </article>`;
     })
     .join('');
 
   const photoRows = list
-    .map(
-      (salon, index) => `
-      <label class="salon-flag ${salon.photoPassed ? 'is-done' : 'is-fail'}">
-        <input type="checkbox" data-salon-flag="photoPassed" data-salon-index="${index}" ${
-        salon.photoPassed ? 'checked' : ''
-      } />
-        <span>${escapeHtml(getSalonDisplayName(salon, index))} — ${
-        salon.photoPassed ? '✅ Прошел' : '❌ Не прошел'
-      }</span>
-      </label>`
-    )
+    .map((salon, index) => {
+      const performer = salon.photoPerformer === 'other' ? 'other' : 'manager';
+      const isManager = performer === 'manager';
+      return `
+        <article class="photo-salon-card">
+          <div class="kpi-card-head">
+            <h3>${escapeHtml(getSalonDisplayName(salon, index))}</h3>
+          </div>
+          <label class="field">
+            <span>Кто проводил фотоотчет?</span>
+            <select data-photo-performer="${index}">
+              <option value="manager" ${isManager ? 'selected' : ''}>Руководитель</option>
+              <option value="other" ${!isManager ? 'selected' : ''}>Другой сотрудник</option>
+            </select>
+          </label>
+          ${
+            isManager
+              ? `<label class="salon-flag ${salon.photoPassed ? 'is-done' : 'is-fail'}">
+                  <input type="checkbox" data-salon-flag="photoPassed" data-salon-index="${index}" ${
+                  salon.photoPassed ? 'checked' : ''
+                } />
+                  <span>${salon.photoPassed ? '✅ Выполнено' : '❌ Не выполнено'}</span>
+                </label>`
+              : `<p class="kpi-note">Фотоотчет выполнял другой сотрудник · бонус руководителя 0 ₽ · штраф 0 ₽</p>`
+          }
+        </article>`;
+    })
     .join('');
 
   const serviceRows = list
@@ -467,13 +479,13 @@ function renderAdminBlock(data) {
 
   root.className = 'kpi-list';
   root.innerHTML = `
-    ${averageCards}
+    ${binaryCards}
     <article class="kpi-card">
       <div class="kpi-card-head">
         <h3>Фотоотчет (Т2 &gt;=100%)</h3>
-        <span class="pill is-neutral">+2000 / −1000 за салон</span>
+        <span class="pill is-neutral">Руководитель: +2000 / −1000 · другой: 0</span>
       </div>
-      <div class="salon-flags">${photoRows || '<p class="kpi-note">Добавьте салоны</p>'}</div>
+      <div class="salon-flags photo-salon-list">${photoRows || '<p class="kpi-note">Добавьте салоны</p>'}</div>
       <div class="kpi-metrics" data-admin-metrics="photoReport"></div>
     </article>
     <article class="kpi-card">
@@ -498,19 +510,35 @@ function updateAdminBlockResults(adminResult) {
   const byId = Object.fromEntries((adminResult.items || []).map((i) => [i.id, i]));
 
   administrativeRules
-    .filter((r) => r.type === 'averageBudget')
+    .filter((r) => r.type === 'binaryDone')
     .forEach((rule) => {
       const item = byId[rule.id];
       const el = document.querySelector(`[data-admin-metrics="${rule.id}"]`);
       if (!el || !item) return;
       el.innerHTML = `
-        <div class="kpi-metric"><span class="label">Выполнение</span><span class="value">${formatPercent(item.completion)}</span></div>
-        <div class="kpi-metric is-brand"><span class="label">🟢 Бонус</span><span class="value">${formatMoney(item.bonus)}</span></div>
-        <div class="kpi-metric is-positive"><span class="label">Максимум</span><span class="value">${formatMoney(item.maxBonus)}</span></div>
-        <div class="kpi-metric is-negative"><span class="label">🔴 Потеря</span><span class="value">−${formatMoney(item.loss)}</span></div>`;
+        <div class="kpi-metric"><span class="label">Статус</span><span class="value">${
+          item.done ? '✅ Выполнено' : '❌ Не выполнено'
+        }</span></div>
+        <div class="kpi-metric is-brand"><span class="label">🟢 Бонус</span><span class="value">${formatMoney(
+          item.bonus
+        )}</span></div>
+        <div class="kpi-metric is-positive"><span class="label">Максимум</span><span class="value">${formatMoney(
+          item.maxBonus
+        )}</span></div>`;
     });
 
-  ['photoReport', 'serviceBonus', 'txvChecks'].forEach((id) => {
+  const photo = byId.photoReport;
+  const photoEl = document.querySelector('[data-admin-metrics="photoReport"]');
+  if (photoEl && photo) {
+    photoEl.innerHTML = `
+      <div class="kpi-metric is-positive"><span class="label">Руководитель выполнил</span><span class="value">${photo.passed}</span></div>
+      <div class="kpi-metric is-negative"><span class="label">Руководитель не выполнил</span><span class="value">${photo.failed}</span></div>
+      <div class="kpi-metric"><span class="label">Другой сотрудник</span><span class="value">${photo.otherCount || 0}</span></div>
+      <div class="kpi-metric is-brand"><span class="label">🟢 Бонус</span><span class="value">${formatMoney(photo.bonus)}</span></div>
+      <div class="kpi-metric is-warning"><span class="label">Максимум</span><span class="value">${formatMoney(photo.maxBonus)}</span></div>`;
+  }
+
+  ['serviceBonus', 'txvChecks'].forEach((id) => {
     const item = byId[id];
     const el = document.querySelector(`[data-admin-metrics="${id}"]`);
     if (!el || !item) return;
@@ -522,13 +550,13 @@ function updateAdminBlockResults(adminResult) {
   });
 
   const labels = {
-    recommendations: 'Бонус за рекомендации',
-    cardShare: 'Бонус за долю продаж по карте',
-    dovChecklist: 'Бонус за чек-лист ДОВ',
-    monthlyTesting: 'Бонус за тестирование',
-    photoReport: 'Бонус за фотоотчет',
-    serviceBonus: 'Бонус за сервис',
-    txvChecks: 'Бонус за ТхВ',
+    recommendations: '1. Рекомендации',
+    cardShare: '2. Доля продаж по карте',
+    dovChecklist: '3. Чек-лист ДОВ',
+    monthlyTesting: '4. Ежемесячное тестирование',
+    photoReport: '5. Фотоотчет',
+    serviceBonus: '6. Бонус за сервис',
+    txvChecks: '7. ТхВ',
   };
 
   document.getElementById('adminResultStrip').innerHTML = `
@@ -579,7 +607,7 @@ function renderOperatorBlock(data) {
   root.innerHTML = `
     <div class="form-grid form-grid-2" style="margin-bottom:14px">
       <div class="field">
-        <span>Салонов Tele2 (авто)</span>
+        <span>Салонов T2 (авто)</span>
         <div class="hint-box">${tele2.length}</div>
       </div>
       <div class="field">
@@ -590,7 +618,7 @@ function renderOperatorBlock(data) {
     <div id="tele2Validation" class="validation-msg" hidden></div>
     <div class="kpi-list" id="tele2SalonCards">${
       salonCards ||
-      '<p class="kpi-note">Нет салонов Tele2. Выберите оператора Tele2 в карточках салонов выше.</p>'
+      '<p class="kpi-note">Нет салонов T2. Выберите оператора T2 в карточках салонов выше.</p>'
     }</div>
     <div id="operatorFailedKpis" class="failed-kpis"></div>`;
 }
@@ -615,7 +643,7 @@ function updateOperatorBlockResults(op) {
       validation.hidden = false;
       validation.className = 'validation-msg is-error';
       validation.textContent =
-        'Количество салонов Tele2 не может превышать общее количество салонов.';
+        'Количество салонов T2 не может превышать общее количество салонов.';
     } else if (!op.budgetDefined && op.salonsTotal > 0) {
       validation.hidden = false;
       validation.className = 'validation-msg is-warning';
@@ -1129,7 +1157,7 @@ function renderLosses(result) {
 
   if (result.operator) {
     rows.push({
-      title: 'Операторский блок (Tele2)',
+      title: 'Операторский блок (T2)',
       completion: result.operator.completion,
       efficiency: result.operator.coefficient,
       current: result.operator.bonus,
@@ -1138,7 +1166,7 @@ function renderLosses(result) {
       max: result.operator.maxBonus,
       plus: result.operator.potentialPlus,
       reason: result.operator.invalidTele2
-        ? 'Tele2 больше общего числа салонов'
+        ? 'T2 больше общего числа салонов'
         : `${result.operator.doneKpis}/${result.operator.totalKpis} KPI`,
     });
   }
@@ -1346,8 +1374,6 @@ function initCollapse() {
 }
 
 function bindEvents() {
-  document.getElementById('employeeSearch').addEventListener('input', renderEmployeeList);
-
   document.getElementById('employeeList').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-employee-id]');
     if (!btn) return;
@@ -1591,16 +1617,30 @@ function bindEvents() {
     recalculate();
   });
 
-  document.getElementById('section-admin').addEventListener('input', (e) => {
-    const plan = e.target.closest('[data-admin-plan]');
-    const fact = e.target.closest('[data-admin-fact]');
-    if (plan || fact) {
-      const id = plan?.dataset.adminPlan || fact?.dataset.adminFact;
+  document.getElementById('section-admin').addEventListener('change', (e) => {
+    const doneSelect = e.target.closest('[data-admin-done]');
+    if (doneSelect) {
+      const id = doneSelect.dataset.adminDone;
       updateMonthField(UI.store, (data) => {
-        if (!data.administrative[id]) data.administrative[id] = { plan: 0, fact: 0 };
-        if (plan) data.administrative[id].plan = Number(plan.value) || 0;
-        if (fact) data.administrative[id].fact = Number(fact.value) || 0;
+        if (!data.administrative[id]) data.administrative[id] = { passed: false };
+        data.administrative[id].passed = doneSelect.value === '1';
       });
+      recalculate();
+      return;
+    }
+
+    const performer = e.target.closest('[data-photo-performer]');
+    if (performer) {
+      const index = Number(performer.dataset.photoPerformer);
+      updateMonthField(UI.store, (data) => {
+        if (!data.salonsList[index]) return;
+        data.salonsList[index].photoPerformer =
+          performer.value === 'other' ? 'other' : 'manager';
+      });
+      const data = getActiveMonthData(UI.store);
+      UI.recalculating = true;
+      renderAdminBlock(data);
+      UI.recalculating = false;
       recalculate();
       return;
     }
@@ -1622,7 +1662,7 @@ function bindEvents() {
         if (span && salon) {
           const name = getSalonDisplayName(salon, index);
           if (key === 'photoPassed') {
-            span.textContent = `${name} — ${flag.checked ? '✅ Прошел' : '❌ Не прошел'}`;
+            span.textContent = flag.checked ? '✅ Выполнено' : '❌ Не выполнено';
           } else {
             span.textContent = `${name} — ${flag.checked ? '✅ Выполнил' : '❌ Не выполнил'}`;
           }
