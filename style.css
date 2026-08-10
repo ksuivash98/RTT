@@ -1174,3 +1174,105 @@ body {
 .panel-salons {
   border-color: #9fc3c2;
 }
+
+.salon-cards {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.panel-toggle {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px 14px;
+  margin: 0 0 4px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.panel-toggle:hover {
+  opacity: 0.92;
+}
+
+.panel-toggle-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.panel-toggle-main strong {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.panel-toggle-main small {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.panel-toggle-sum {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--brand-dark);
+  white-space: nowrap;
+}
+
+.collapse-icon {
+  font-size: 1rem;
+  color: var(--brand);
+  transition: transform 0.15s ease;
+}
+
+.panel.is-collapsed .panel-body {
+  display: none;
+}
+
+.panel.is-collapsed .panel-toggle {
+  border-bottom: 0;
+  padding-bottom: 4px;
+  margin-bottom: 0;
+}
+
+.salon-flags {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.salon-flag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.salon-flag.is-done {
+  background: var(--positive-bg);
+  border-color: #b7e0c8;
+  color: var(--positive);
+}
+
+.salon-flag.is-fail {
+  background: var(--negative-bg);
+  border-color: #f0b8b3;
+  color: var(--negative);
+}
+
+.is-collapsible > .panel-head {
+  display: none;
+}

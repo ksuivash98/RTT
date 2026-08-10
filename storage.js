@@ -25,6 +25,7 @@ function createDefaultStore() {
     activeEmployeeId: employee.id,
     activeYear: now.getFullYear(),
     activeMonth: now.getMonth() + 1,
+    uiCollapse: {},
   };
 }
 
@@ -58,6 +59,9 @@ function normalizeStore(store) {
   const now = new Date();
   store.activeYear = Number(store.activeYear) || now.getFullYear();
   store.activeMonth = Number(store.activeMonth) || now.getMonth() + 1;
+  if (!store.uiCollapse || typeof store.uiCollapse !== 'object') {
+    store.uiCollapse = {};
+  }
 
   return store;
 }
@@ -70,6 +74,10 @@ function mergeMonthData(data) {
   let salonsComboDone = Math.max(0, Math.floor(Number(data.salonsComboDone) || 0));
   if (salonsComboDone > salonsTotal) salonsComboDone = salonsTotal;
 
+  const salonsList = mergeSalonsList(data, salonsTotal);
+  const administrative = mergeAdministrativeData(data.administrative, salonsList);
+  const operator = syncOperatorFromSalonsList(salonsList);
+
   return {
     grade: data.grade && managerGrades[data.grade] ? data.grade : base.grade,
     salesValues: { ...base.salesValues, ...(data.salesValues || {}) },
@@ -78,6 +86,7 @@ function mergeMonthData(data) {
       ...(data.operatorSalesValues || {}),
     },
     salonsTotal,
+    salonsList,
     salonsComboDone,
     creditPlanPercent:
       data.creditPlanPercent === undefined || data.creditPlanPercent === null
@@ -98,15 +107,77 @@ function mergeMonthData(data) {
         ])
       ),
     },
-    administrative: mergeAdministrativeData(data.administrative, salonsTotal),
-    operator: mergeOperatorData(data.operator, salonsTotal),
+    administrative,
+    operator,
     blackList: { ...(data.blackList || {}) },
   };
 }
 
-function mergeAdministrativeData(raw, salonsTotal) {
+/**
+ * Список салонов: имя, оператор, флаги админки, KPI Tele2.
+ * Миграция со старых tele2Salons / photoReportPassed.
+ */
+function mergeSalonsList(data, salonsTotal) {
+  const existing = Array.isArray(data.salonsList) ? data.salonsList : [];
+  const oldTele2 = Array.isArray(data.operator?.salons) ? data.operator.salons : [];
+  const oldTele2Count = Math.max(0, Math.floor(Number(data.operator?.tele2Salons) || 0));
+  const admin = data.administrative || {};
+
+  // Миграция: если списка нет, но есть старые Tele2 KPI
+  let source = existing;
+  if (!existing.length && salonsTotal > 0) {
+    source = [];
+    for (let i = 0; i < salonsTotal; i += 1) {
+      const salon = createEmptySalon();
+      if (i < oldTele2Count) {
+        salon.operator = 'tele2';
+        const prev = oldTele2[i]?.kpis || {};
+        operatorTele2Kpis.forEach((kpi) => {
+          salon.kpis[kpi.id] = Boolean(prev[kpi.id]);
+        });
+      } else {
+        salon.operator = 'other';
+      }
+      source.push(salon);
+    }
+
+    // Миграция счётчиков фото/сервис/тхв → первые N флагов
+    const photoN = Math.max(0, Math.floor(Number(admin.photoReportPassed) || 0));
+    const serviceN = Math.max(0, Math.floor(Number(admin.servicePassed) || 0));
+    const txvN = Math.max(0, Math.floor(Number(admin.txvPassed) || 0));
+    source.forEach((salon, i) => {
+      salon.photoPassed = i < photoN;
+      salon.servicePassed = i < serviceN;
+      salon.txvPassed = i < txvN;
+    });
+  }
+
+  const list = [];
+  for (let i = 0; i < salonsTotal; i += 1) {
+    const prev = source[i] || createEmptySalon();
+    const operatorId = salonOperators.some((o) => o.id === prev.operator)
+      ? prev.operator
+      : 'tele2';
+    const kpis = createEmptyTele2SalonKpis();
+    operatorTele2Kpis.forEach((kpi) => {
+      kpis[kpi.id] = Boolean(prev.kpis?.[kpi.id]);
+    });
+    list.push({
+      name: String(prev.name || ''),
+      operator: operatorId,
+      photoPassed: Boolean(prev.photoPassed),
+      servicePassed: Boolean(prev.servicePassed),
+      txvPassed: Boolean(prev.txvPassed),
+      kpis,
+    });
+  }
+  return list;
+}
+
+function mergeAdministrativeData(raw, salonsList) {
   const base = createEmptyAdministrativeData();
   const src = raw && typeof raw === 'object' ? raw : {};
+  const list = Array.isArray(salonsList) ? salonsList : [];
 
   administrativeRules.forEach((rule) => {
     if (rule.type === 'averageBudget') {
@@ -117,36 +188,42 @@ function mergeAdministrativeData(raw, salonsTotal) {
     }
   });
 
-  let photo = Math.max(0, Math.floor(Number(src.photoReportPassed) || 0));
-  let service = Math.max(0, Math.floor(Number(src.servicePassed) || 0));
-  let txv = Math.max(0, Math.floor(Number(src.txvPassed) || 0));
-  if (photo > salonsTotal) photo = salonsTotal;
-  if (service > salonsTotal) service = salonsTotal;
-  if (txv > salonsTotal) txv = salonsTotal;
-
-  base.photoReportPassed = photo;
-  base.servicePassed = service;
-  base.txvPassed = txv;
+  // Счётчики синхронизируются из флагов салонов (формулы используют те же числа)
+  base.photoReportPassed = list.filter((s) => s.photoPassed).length;
+  base.servicePassed = list.filter((s) => s.servicePassed).length;
+  base.txvPassed = list.filter((s) => s.txvPassed).length;
   return base;
 }
 
-function mergeOperatorData(raw, salonsTotal) {
-  const src = raw && typeof raw === 'object' ? raw : {};
-  // Не обрезаем Tele2 здесь: превышение ловит валидация расчёта
-  const tele2Salons = Math.max(0, Math.floor(Number(src.tele2Salons) || 0));
+/** Операторский блок: только салоны с оператором Tele2. */
+function syncOperatorFromSalonsList(salonsList) {
+  const tele2 = (salonsList || []).filter((s) => s.operator === 'tele2');
+  return {
+    tele2Salons: tele2.length,
+    salons: tele2.map((s) => ({
+      kpis: { ...s.kpis },
+      name: s.name,
+      sourceIndex: undefined,
+    })),
+  };
+}
 
-  const existing = Array.isArray(src.salons) ? src.salons : [];
-  const salons = [];
-  for (let i = 0; i < tele2Salons; i += 1) {
-    const prev = existing[i]?.kpis || {};
-    const kpis = createEmptyTele2SalonKpis();
-    operatorTele2Kpis.forEach((kpi) => {
-      kpis[kpi.id] = Boolean(prev[kpi.id]);
+/**
+ * Собирает operator.salons с привязкой к индексам salonsList для UI-имён.
+ */
+function getTele2SalonsWithMeta(salonsList) {
+  const result = [];
+  (salonsList || []).forEach((salon, index) => {
+    if (salon.operator !== 'tele2') return;
+    result.push({
+      listIndex: index,
+      name: salon.name,
+      displayName: getSalonDisplayName(salon, index),
+      title: getSalonTitle(salon, index),
+      kpis: { ...salon.kpis },
     });
-    salons.push({ kpis });
-  }
-
-  return { tele2Salons, salons };
+  });
+  return result;
 }
 
 function saveStore(store) {
@@ -226,16 +303,24 @@ function updateMonthField(store, updater) {
   const data = ensureActiveMonthData(store);
   updater(data);
 
-  // Единые ограничения по количеству салонов
   data.salonsTotal = Math.max(0, Math.floor(Number(data.salonsTotal) || 0));
+  if (!Array.isArray(data.salonsList)) data.salonsList = [];
+
+  // Подгоняем длину списка салонов под количество
+  while (data.salonsList.length < data.salonsTotal) {
+    data.salonsList.push(createEmptySalon());
+  }
+  if (data.salonsList.length > data.salonsTotal) {
+    data.salonsList = data.salonsList.slice(0, data.salonsTotal);
+  }
+
   if (data.salonsComboDone > data.salonsTotal) {
     data.salonsComboDone = data.salonsTotal;
   }
 
-  data.administrative = mergeAdministrativeData(data.administrative, data.salonsTotal);
-  data.operator = mergeOperatorData(data.operator, data.salonsTotal);
+  data.administrative = mergeAdministrativeData(data.administrative, data.salonsList);
+  data.operator = syncOperatorFromSalonsList(data.salonsList);
 
-  // Пересохраняем нормализованный месяц
   const employee = getActiveEmployee(store);
   const key = getActivePeriodKey(store);
   employee.months[key] = mergeMonthData(data);

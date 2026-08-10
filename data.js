@@ -267,6 +267,18 @@ const operatorBudgetBySalons = {
 const operatorRules = [];
 
 /**
+ * Операторы салона (идентификация).
+ * В расчёте операторского блока участвует ТОЛЬКО Tele2.
+ */
+const salonOperators = [
+  { id: 'tele2', name: 'Tele2' },
+  { id: 'mts', name: 'МТС' },
+  { id: 'megafon', name: 'МегаФон' },
+  { id: 'beeline', name: 'Билайн' },
+  { id: 'other', name: 'Другой' },
+];
+
+/**
  * Пустая конфигурация чёрного списка.
  * Каждое условие: название, описание, нарушение, штраф, влияние на бонус.
  */
@@ -281,6 +293,32 @@ function createEmptyTele2SalonKpis() {
     kpis[kpi.id] = false;
   });
   return kpis;
+}
+
+function createEmptySalon() {
+  return {
+    name: '',
+    operator: 'tele2',
+    photoPassed: false,
+    servicePassed: false,
+    txvPassed: false,
+    kpis: createEmptyTele2SalonKpis(),
+  };
+}
+
+function getSalonOperatorLabel(operatorId) {
+  return salonOperators.find((o) => o.id === operatorId)?.name || 'Tele2';
+}
+
+/** Отображаемое имя: «Березники» или «Салон №N». */
+function getSalonDisplayName(salon, index) {
+  const name = String(salon?.name || '').trim();
+  return name || `Салон №${index + 1}`;
+}
+
+/** «Березники — Tele2» или «Салон №1 — МТС». */
+function getSalonTitle(salon, index) {
+  return `${getSalonDisplayName(salon, index)} — ${getSalonOperatorLabel(salon?.operator)}`;
 }
 
 function createEmptyAdministrativeData() {
@@ -328,6 +366,7 @@ function createEmptyMonthData() {
     salesValues,
     operatorSalesValues,
     salonsTotal: 0,
+    salonsList: [],
     salonsComboDone: 0,
     creditPlanPercent: 100,
     attachment: 2.3,

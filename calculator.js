@@ -819,7 +819,13 @@ function calculateSalesBonus(monthData, month) {
  */
 function calculateAdministrativeBonus(monthData) {
   const salonsTotal = Math.max(0, Math.floor(Number(monthData.salonsTotal) || 0));
-  const admin = monthData.administrative || createEmptyAdministrativeData();
+  const salonsList = Array.isArray(monthData.salonsList)
+    ? monthData.salonsList
+    : mergeSalonsList(monthData, salonsTotal);
+  const admin = mergeAdministrativeData(
+    monthData.administrative || createEmptyAdministrativeData(),
+    salonsList
+  );
   const items = [];
 
   administrativeRules.forEach((rule) => {
@@ -827,7 +833,6 @@ function calculateAdministrativeBonus(monthData) {
       const plan = Number(admin[rule.id]?.plan) || 0;
       const fact = Number(admin[rule.id]?.fact) || 0;
       const completion = calcCompletionPercent(plan, fact);
-      // Пропорция к бюджету без шкалы эффективности экономики, потолок = бюджет
       const ratio = plan > 0 ? Math.min(1, fact / plan) : 0;
       const bonus = roundMoney(rule.budget * ratio);
       const maxBonus = rule.budget;
@@ -857,6 +862,11 @@ function calculateAdministrativeBonus(monthData) {
       const bonus = roundMoney(passed * rule.passBonus - failed * rule.failPenalty);
       const maxBonus = roundMoney(salonsTotal * rule.passBonus);
       const loss = calculateLoss(bonus, maxBonus);
+      const salonStatuses = salonsList.map((salon, index) => ({
+        index,
+        title: getSalonDisplayName(salon, index),
+        passed: Boolean(salon.photoPassed),
+      }));
 
       items.push({
         id: rule.id,
@@ -868,6 +878,7 @@ function calculateAdministrativeBonus(monthData) {
         passed,
         failed,
         salonsTotal,
+        salonStatuses,
         bonus,
         maxBonus,
         loss,
@@ -877,18 +888,25 @@ function calculateAdministrativeBonus(monthData) {
     }
 
     if (rule.type === 'perSalonBonus') {
-      const field =
-        rule.id === 'serviceBonus'
-          ? 'servicePassed'
-          : rule.id === 'txvChecks'
-            ? 'txvPassed'
-            : null;
-      let passed = field ? Math.max(0, Math.floor(Number(admin[field]) || 0)) : 0;
+      const flagKey = rule.id === 'serviceBonus' ? 'servicePassed' : 'txvPassed';
+      let passed = Math.max(
+        0,
+        Math.floor(
+          Number(
+            rule.id === 'serviceBonus' ? admin.servicePassed : admin.txvPassed
+          ) || 0
+        )
+      );
       if (passed > salonsTotal) passed = salonsTotal;
       const failed = Math.max(0, salonsTotal - passed);
       const bonus = roundMoney(passed * rule.perSalon);
       const maxBonus = roundMoney(salonsTotal * rule.perSalon);
       const loss = calculateLoss(bonus, maxBonus);
+      const salonStatuses = salonsList.map((salon, index) => ({
+        index,
+        title: getSalonDisplayName(salon, index),
+        passed: Boolean(salon[flagKey]),
+      }));
 
       items.push({
         id: rule.id,
@@ -900,6 +918,7 @@ function calculateAdministrativeBonus(monthData) {
         passed,
         failed,
         salonsTotal,
+        salonStatuses,
         bonus,
         maxBonus,
         loss,
@@ -968,18 +987,23 @@ function getOperatorCoefficient(percent) {
 /**
  * Операторский блок — только TELE2.
  * Бонус = бюджет(по числу салонов) × коэффициент выполнения KPI.
+ * Список Tele2 берётся из salonsList (оператор === tele2); формулы без изменений.
  */
 function calculateOperatorBonus(monthData) {
   const salonsTotal = Math.max(0, Math.floor(Number(monthData.salonsTotal) || 0));
-  const operator = mergeOperatorData(monthData.operator, salonsTotal);
-  const tele2Salons = operator.tele2Salons;
+  const salonsList = Array.isArray(monthData.salonsList)
+    ? monthData.salonsList
+    : mergeSalonsList(monthData, salonsTotal);
+  const tele2Meta = getTele2SalonsWithMeta(salonsList);
+  const tele2Salons = tele2Meta.length;
+  // Tele2 не может превысить общее число: список строится из салонов
   const invalidTele2 = tele2Salons > salonsTotal;
 
   const kpisPerSalon = operatorTele2Kpis.length;
   const totalKpis = tele2Salons * kpisPerSalon;
 
   let doneKpis = 0;
-  const salonResults = operator.salons.map((salon, index) => {
+  const salonResults = tele2Meta.map((salon) => {
     const failed = [];
     let done = 0;
     operatorTele2Kpis.forEach((kpi) => {
@@ -989,8 +1013,10 @@ function calculateOperatorBonus(monthData) {
     });
     doneKpis += done;
     return {
-      index: index + 1,
-      name: `Салон Tele2 №${index + 1}`,
+      index: salon.listIndex + 1,
+      listIndex: salon.listIndex,
+      name: salon.title,
+      displayName: salon.displayName,
       done,
       total: kpisPerSalon,
       failed,
@@ -1278,11 +1304,10 @@ function runSelfChecks() {
   // Сценарий оператора: 3 салона, 3 Tele2, 13/15 → 86.67% → ×0.75 → 15750
   const opMonth = createEmptyMonthData();
   opMonth.salonsTotal = 3;
-  opMonth.operator.tele2Salons = 3;
-  opMonth.operator = mergeOperatorData({ tele2Salons: 3, salons: [] }, 3);
-  // Отметим 13 KPI: все кроме 2
+  opMonth.salonsList = [createEmptySalon(), createEmptySalon(), createEmptySalon()];
   let marked = 0;
-  opMonth.operator.salons.forEach((salon) => {
+  opMonth.salonsList.forEach((salon) => {
+    salon.operator = 'tele2';
     operatorTele2Kpis.forEach((kpi) => {
       if (marked < 13) {
         salon.kpis[kpi.id] = true;
@@ -1300,8 +1325,9 @@ function runSelfChecks() {
   // Сценарий 1: 1 салон, 5/5
   const op1 = createEmptyMonthData();
   op1.salonsTotal = 1;
-  op1.operator = mergeOperatorData({ tele2Salons: 1, salons: [] }, 1);
-  op1.operator.salons[0].kpis = Object.fromEntries(operatorTele2Kpis.map((k) => [k.id, true]));
+  op1.salonsList = [createEmptySalon()];
+  op1.salonsList[0].operator = 'tele2';
+  op1.salonsList[0].kpis = Object.fromEntries(operatorTele2Kpis.map((k) => [k.id, true]));
   const r1 = calculateOperatorBonus(op1);
   check('Сценарий1 %', r1.completion, 100);
   check('Сценарий1 коэфф', r1.coefficient, 1);
@@ -1310,9 +1336,10 @@ function runSelfChecks() {
   // Сценарий 2: 2 салона, 8/10 → 80% → 0.8 → 14400
   const op2 = createEmptyMonthData();
   op2.salonsTotal = 2;
-  op2.operator = mergeOperatorData({ tele2Salons: 2, salons: [] }, 2);
+  op2.salonsList = [createEmptySalon(), createEmptySalon()];
   let m2 = 0;
-  op2.operator.salons.forEach((salon) => {
+  op2.salonsList.forEach((salon) => {
+    salon.operator = 'tele2';
     operatorTele2Kpis.forEach((kpi) => {
       salon.kpis[kpi.id] = m2 < 8;
       m2 += 1;
@@ -1326,9 +1353,13 @@ function runSelfChecks() {
   // Сценарий 5: 3 салона, 2 Tele2, 6/10 → 60% → 0.5 → 10500
   const op5 = createEmptyMonthData();
   op5.salonsTotal = 3;
-  op5.operator = mergeOperatorData({ tele2Salons: 2, salons: [] }, 3);
+  op5.salonsList = [createEmptySalon(), createEmptySalon(), createEmptySalon()];
+  op5.salonsList[0].operator = 'tele2';
+  op5.salonsList[1].operator = 'tele2';
+  op5.salonsList[2].operator = 'mts';
   let m5 = 0;
-  op5.operator.salons.forEach((salon) => {
+  op5.salonsList.forEach((salon) => {
+    if (salon.operator !== 'tele2') return;
     operatorTele2Kpis.forEach((kpi) => {
       salon.kpis[kpi.id] = m5 < 6;
       m5 += 1;
@@ -1340,10 +1371,16 @@ function runSelfChecks() {
   check('Сценарий5 коэфф', r5.coefficient, 0.5);
   check('Сценарий5 бонус', r5.bonus, 10500);
 
+  // МТС не входит в операторский блок
+  check('МТС исключён из Tele2', r5.tele2Salons, 2);
+
   // Фотоотчёт: 10 салонов, 8 прошли → 14000
   const adm = createEmptyMonthData();
   adm.salonsTotal = 10;
-  adm.administrative.photoReportPassed = 8;
+  adm.salonsList = Array.from({ length: 10 }, () => createEmptySalon());
+  adm.salonsList.forEach((s, i) => {
+    s.photoPassed = i < 8;
+  });
   const admRes = calculateAdministrativeBonus(adm);
   const photo = admRes.items.find((i) => i.id === 'photoReport');
   check('Фотоотчёт бонус', photo.bonus, 14000);

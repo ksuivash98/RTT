@@ -5,6 +5,14 @@
 const UI = {
   store: null,
   recalculating: false,
+  collapse: {
+    salary: false,
+    economy: false,
+    admin: false,
+    operator: false,
+    blacklist: false,
+    sales: false,
+  },
 };
 
 function showToast(message, isError = false) {
@@ -109,12 +117,54 @@ function fillFormFromData(data) {
   document.getElementById('attachment').value = data.attachment;
 
   renderGradeSelector(data.grade);
+  renderSalonCards(data);
   renderSalesTables(data);
   renderEconomyKpiInputs(data);
   renderAdminBlock(data);
   renderOperatorBlock(data);
+  applyCollapseState();
 
   UI.recalculating = false;
+}
+
+function renderSalonCards(data) {
+  const root = document.getElementById('salonCards');
+  if (!root) return;
+  const list = data.salonsList || [];
+  if (!list.length) {
+    root.innerHTML = '<p class="kpi-note">Укажите количество салонов, чтобы добавить карточки</p>';
+    return;
+  }
+
+  root.innerHTML = list
+    .map((salon, index) => {
+      const options = salonOperators
+        .map(
+          (op) =>
+            `<option value="${op.id}" ${salon.operator === op.id ? 'selected' : ''}>${escapeHtml(
+              op.name
+            )}</option>`
+        )
+        .join('');
+      return `
+        <article class="kpi-card salon-identity-card">
+          <div class="kpi-card-head">
+            <h3>Салон №${index + 1}</h3>
+            <span class="pill is-neutral">${escapeHtml(getSalonTitle(salon, index))}</span>
+          </div>
+          <div class="form-grid form-grid-2">
+            <label class="field">
+              <span>Название салона</span>
+              <input type="text" data-salon-name="${index}" value="${escapeHtml(salon.name)}" placeholder="Например, Березники" />
+            </label>
+            <label class="field">
+              <span>Оператор</span>
+              <select data-salon-operator="${index}">${options}</select>
+            </label>
+          </div>
+        </article>`;
+    })
+    .join('');
 }
 
 function renderSalesTables(data) {
@@ -194,7 +244,7 @@ function renderConfigBlocks(result) {
 function renderAdminBlock(data) {
   const root = document.getElementById('adminBlock');
   const admin = data.administrative || createEmptyAdministrativeData();
-  const salonsTotal = data.salonsTotal || 0;
+  const list = data.salonsList || [];
 
   const averageCards = administrativeRules
     .filter((r) => r.type === 'averageBudget')
@@ -221,6 +271,48 @@ function renderAdminBlock(data) {
     })
     .join('');
 
+  const photoRows = list
+    .map(
+      (salon, index) => `
+      <label class="salon-flag ${salon.photoPassed ? 'is-done' : 'is-fail'}">
+        <input type="checkbox" data-salon-flag="photoPassed" data-salon-index="${index}" ${
+        salon.photoPassed ? 'checked' : ''
+      } />
+        <span>${escapeHtml(getSalonDisplayName(salon, index))} — ${
+        salon.photoPassed ? '✅ Прошел' : '❌ Не прошел'
+      }</span>
+      </label>`
+    )
+    .join('');
+
+  const serviceRows = list
+    .map(
+      (salon, index) => `
+      <label class="salon-flag ${salon.servicePassed ? 'is-done' : 'is-fail'}">
+        <input type="checkbox" data-salon-flag="servicePassed" data-salon-index="${index}" ${
+        salon.servicePassed ? 'checked' : ''
+      } />
+        <span>${escapeHtml(getSalonDisplayName(salon, index))} — ${
+        salon.servicePassed ? '✅ Выполнил' : '❌ Не выполнил'
+      }</span>
+      </label>`
+    )
+    .join('');
+
+  const txvRows = list
+    .map(
+      (salon, index) => `
+      <label class="salon-flag ${salon.txvPassed ? 'is-done' : 'is-fail'}">
+        <input type="checkbox" data-salon-flag="txvPassed" data-salon-index="${index}" ${
+        salon.txvPassed ? 'checked' : ''
+      } />
+        <span>${escapeHtml(getSalonDisplayName(salon, index))} — ${
+        salon.txvPassed ? '✅ Выполнил' : '❌ Не выполнил'
+      }</span>
+      </label>`
+    )
+    .join('');
+
   root.className = 'kpi-list';
   root.innerHTML = `
     ${averageCards}
@@ -229,17 +321,7 @@ function renderAdminBlock(data) {
         <h3>Фотоотчет (Т2 &gt;=100%)</h3>
         <span class="pill is-neutral">+2000 / −1000 за салон</span>
       </div>
-      <p class="kpi-note">Всего салонов: <strong id="adminSalonsTotalLabel">${salonsTotal}</strong></p>
-      <div class="kpi-inputs">
-        <label class="field">
-          <span>Количество салонов, прошедших KPI</span>
-          <input type="number" min="0" step="1" id="photoReportPassed" value="${admin.photoReportPassed || 0}" />
-        </label>
-        <div class="field">
-          <span>Не прошли (авто)</span>
-          <div class="hint-box" id="photoReportFailedLabel">0</div>
-        </div>
-      </div>
+      <div class="salon-flags">${photoRows || '<p class="kpi-note">Добавьте салоны</p>'}</div>
       <div class="kpi-metrics" data-admin-metrics="photoReport"></div>
     </article>
     <article class="kpi-card">
@@ -247,12 +329,7 @@ function renderAdminBlock(data) {
         <h3>Выполнение критериев получения Бонуса за сервис</h3>
         <span class="pill is-neutral">+2000 ₽ / салон</span>
       </div>
-      <div class="kpi-inputs">
-        <label class="field">
-          <span>Количество выполнивших KPI</span>
-          <input type="number" min="0" step="1" id="servicePassed" value="${admin.servicePassed || 0}" />
-        </label>
-      </div>
+      <div class="salon-flags">${serviceRows || '<p class="kpi-note">Добавьте салоны</p>'}</div>
       <div class="kpi-metrics" data-admin-metrics="serviceBonus"></div>
     </article>
     <article class="kpi-card">
@@ -260,12 +337,7 @@ function renderAdminBlock(data) {
         <h3>Доля проверок ТхВ от WS &gt;=40%</h3>
         <span class="pill is-neutral">+2000 ₽ / салон</span>
       </div>
-      <div class="kpi-inputs">
-        <label class="field">
-          <span>Количество салонов, выполнивших KPI</span>
-          <input type="number" min="0" step="1" id="txvPassed" value="${admin.txvPassed || 0}" />
-        </label>
-      </div>
+      <div class="salon-flags">${txvRows || '<p class="kpi-note">Добавьте салоны</p>'}</div>
       <div class="kpi-metrics" data-admin-metrics="txvChecks"></div>
     </article>`;
 }
@@ -286,27 +358,13 @@ function updateAdminBlockResults(adminResult) {
         <div class="kpi-metric is-negative"><span class="label">🔴 Потеря</span><span class="value">−${formatMoney(item.loss)}</span></div>`;
     });
 
-  const photo = byId.photoReport;
-  const photoEl = document.querySelector('[data-admin-metrics="photoReport"]');
-  const failedLabel = document.getElementById('photoReportFailedLabel');
-  const salonsLabel = document.getElementById('adminSalonsTotalLabel');
-  if (salonsLabel) salonsLabel.textContent = String(adminResult.salonsTotal || 0);
-  if (failedLabel && photo) failedLabel.textContent = String(photo.failed);
-  if (photoEl && photo) {
-    photoEl.innerHTML = `
-      <div class="kpi-metric is-positive"><span class="label">Прошли</span><span class="value">${photo.passed}</span></div>
-      <div class="kpi-metric is-negative"><span class="label">Не прошли</span><span class="value">${photo.failed}</span></div>
-      <div class="kpi-metric is-brand"><span class="label">🟢 Бонус</span><span class="value">${formatMoney(photo.bonus)}</span></div>
-      <div class="kpi-metric is-warning"><span class="label">Максимум</span><span class="value">${formatMoney(photo.maxBonus)}</span></div>`;
-  }
-
-  ['serviceBonus', 'txvChecks'].forEach((id) => {
+  ['photoReport', 'serviceBonus', 'txvChecks'].forEach((id) => {
     const item = byId[id];
     const el = document.querySelector(`[data-admin-metrics="${id}"]`);
     if (!el || !item) return;
     el.innerHTML = `
       <div class="kpi-metric is-positive"><span class="label">Выполнили</span><span class="value">${item.passed}</span></div>
-      <div class="kpi-metric"><span class="label">Не выполнили</span><span class="value">${item.failed}</span></div>
+      <div class="kpi-metric is-negative"><span class="label">Не выполнили</span><span class="value">${item.failed}</span></div>
       <div class="kpi-metric is-brand"><span class="label">🟢 Бонус</span><span class="value">${formatMoney(item.bonus)}</span></div>
       <div class="kpi-metric is-warning"><span class="label">Максимум</span><span class="value">${formatMoney(item.maxBonus)}</span></div>`;
   });
@@ -339,17 +397,19 @@ function updateAdminBlockResults(adminResult) {
 
 function renderOperatorBlock(data) {
   const root = document.getElementById('operatorBlock');
-  const operator = data.operator || createEmptyOperatorData();
-  const salonsTotal = data.salonsTotal || 0;
+  const list = data.salonsList || [];
+  const tele2 = getTele2SalonsWithMeta(list);
 
-  const salonCards = (operator.salons || [])
-    .map((salon, index) => {
+  const salonCards = tele2
+    .map((salon) => {
       const toggles = operatorTele2Kpis
         .map((kpi) => {
           const checked = Boolean(salon.kpis?.[kpi.id]);
           return `
             <label class="kpi-toggle ${checked ? 'is-done' : 'is-fail'}">
-              <input type="checkbox" data-tele2-salon="${index}" data-tele2-kpi="${kpi.id}" ${checked ? 'checked' : ''} />
+              <input type="checkbox" data-tele2-list-index="${salon.listIndex}" data-tele2-kpi="${kpi.id}" ${
+            checked ? 'checked' : ''
+          } />
               <span>${escapeHtml(kpi.name)}</span>
             </label>`;
         })
@@ -357,7 +417,7 @@ function renderOperatorBlock(data) {
       return `
         <article class="kpi-card tele2-salon-card">
           <div class="kpi-card-head">
-            <h3>Салон Tele2 №${index + 1}</h3>
+            <h3>${escapeHtml(salon.title)}</h3>
           </div>
           <div class="tele2-toggles">${toggles}</div>
         </article>`;
@@ -366,17 +426,20 @@ function renderOperatorBlock(data) {
 
   root.innerHTML = `
     <div class="form-grid form-grid-2" style="margin-bottom:14px">
-      <label class="field">
-        <span>Количество салонов Tele2</span>
-        <input type="number" id="tele2Salons" min="0" step="1" value="${operator.tele2Salons || 0}" />
-      </label>
+      <div class="field">
+        <span>Салонов Tele2 (авто)</span>
+        <div class="hint-box">${tele2.length}</div>
+      </div>
       <div class="field">
         <span>Салонов в подчинении</span>
-        <div class="hint-box">${salonsTotal}</div>
+        <div class="hint-box">${data.salonsTotal || 0}</div>
       </div>
     </div>
     <div id="tele2Validation" class="validation-msg" hidden></div>
-    <div class="kpi-list" id="tele2SalonCards">${salonCards || '<p class="kpi-note">Укажите количество салонов Tele2</p>'}</div>
+    <div class="kpi-list" id="tele2SalonCards">${
+      salonCards ||
+      '<p class="kpi-note">Нет салонов Tele2. Выберите оператора Tele2 в карточках салонов выше.</p>'
+    }</div>
     <div id="operatorFailedKpis" class="failed-kpis"></div>`;
 }
 
@@ -385,9 +448,10 @@ function updateOperatorBlockResults(op) {
   const salonsValidation = document.getElementById('salonsValidation');
 
   if (salonsValidation) {
-    if ((op.salonsTotal || 0) <= 0) {
+    if ((op.salonsTotal || 0) < 1) {
       salonsValidation.hidden = false;
-      salonsValidation.textContent = 'Укажите количество салонов в подчинении больше 0 для корректного расчёта.';
+      salonsValidation.textContent =
+        'Количество салонов должно быть целым числом ≥ 1 для корректного расчёта.';
       salonsValidation.className = 'validation-msg is-warning';
     } else {
       salonsValidation.hidden = true;
@@ -398,7 +462,8 @@ function updateOperatorBlockResults(op) {
     if (op.invalidTele2) {
       validation.hidden = false;
       validation.className = 'validation-msg is-error';
-      validation.textContent = 'Ошибка: количество салонов Tele2 не может быть больше общего количества салонов. Расчёт остановлен.';
+      validation.textContent =
+        'Количество салонов Tele2 не может превышать общее количество салонов.';
     } else if (!op.budgetDefined && op.salonsTotal > 0) {
       validation.hidden = false;
       validation.className = 'validation-msg is-warning';
@@ -416,12 +481,15 @@ function updateOperatorBlockResults(op) {
       failedRoot.innerHTML = `
         <h3 class="subhead">Не выполненные KPI</h3>
         ${op.failedBySalon
-          .map(
-            (salon) => `
-          <div class="failed-salon">
-            <div class="why-title">🔴 ${escapeHtml(salon.name)}</div>
-            <ul>${salon.failed.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>
-          </div>`
+          .map((salon) =>
+            salon.failed
+              .map(
+                (f) =>
+                  `<div class="failed-salon"><div class="why-title">🔴 ${escapeHtml(
+                    salon.displayName || salon.name
+                  )} — ${escapeHtml(f.name)}</div></div>`
+              )
+              .join('')
           )
           .join('')}`;
     }
@@ -1069,7 +1137,68 @@ function recalculate() {
   renderConfigBlocks(result);
   renderLosses(result);
   renderTotal(result);
+  updatePanelSums(result);
   renderPeriodsChips();
+}
+
+function updatePanelSums(result) {
+  const map = {
+    salary: result.fixedSalary,
+    economy: result.economy.bonus,
+    admin: result.administrative.bonus,
+    operator: result.operator.bonus,
+    blacklist: -result.totalPenalties,
+    sales: result.sales.total,
+  };
+  Object.entries(map).forEach(([key, value]) => {
+    const el = document.querySelector(`[data-panel-sum="${key}"]`);
+    if (!el) return;
+    if (key === 'blacklist') {
+      el.textContent = value < 0 ? `−${formatMoney(Math.abs(value))}` : formatMoney(0);
+    } else {
+      el.textContent = formatMoney(value);
+    }
+  });
+}
+
+function applyCollapseState() {
+  Object.keys(UI.collapse).forEach((key) => {
+    setPanelCollapsed(key, Boolean(UI.collapse[key]), false);
+  });
+}
+
+function setPanelCollapsed(key, collapsed, save = true) {
+  UI.collapse[key] = collapsed;
+  const panel = document.querySelector(`[data-panel="${key}"]`);
+  const btn = document.querySelector(`[data-panel-toggle="${key}"]`);
+  if (!panel || !btn) return;
+  panel.classList.toggle('is-collapsed', collapsed);
+  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  const icon = btn.querySelector('.collapse-icon');
+  if (icon) icon.textContent = collapsed ? '▶' : '▼';
+  if (save) {
+    if (!UI.store.uiCollapse) UI.store.uiCollapse = {};
+    UI.store.uiCollapse[key] = collapsed;
+    saveStore(UI.store);
+  }
+}
+
+function initCollapse() {
+  if (UI.store.uiCollapse && typeof UI.store.uiCollapse === 'object') {
+    Object.keys(UI.collapse).forEach((key) => {
+      if (typeof UI.store.uiCollapse[key] === 'boolean') {
+        UI.collapse[key] = UI.store.uiCollapse[key];
+      }
+    });
+  }
+  applyCollapseState();
+
+  document.querySelectorAll('[data-panel-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.panelToggle;
+      setPanelCollapsed(key, !UI.collapse[key], true);
+    });
+  });
 }
 
 function bindEvents() {
@@ -1146,7 +1275,6 @@ function bindEvents() {
   });
 
   const numberFields = [
-    ['salonsTotal', 'salonsTotal', true],
     ['salonsComboDone', 'salonsComboDone', true],
     ['creditPlanPercent', 'creditPlanPercent', false],
     ['attachment', 'attachment', false],
@@ -1159,28 +1287,85 @@ function bindEvents() {
         if (!Number.isFinite(value)) value = 0;
         if (integer) value = Math.max(0, Math.floor(value));
         data[key] = value;
-
-        if (key === 'salonsTotal' && data.salonsComboDone > data.salonsTotal) {
-          data.salonsComboDone = data.salonsTotal;
-          document.getElementById('salonsComboDone').value = data.salonsComboDone;
-        }
         if (key === 'salonsComboDone' && data.salonsComboDone > data.salonsTotal) {
           data.salonsComboDone = data.salonsTotal;
           e.target.value = data.salonsComboDone;
         }
       });
-
-      if (key === 'salonsTotal') {
-        const data = getActiveMonthData(UI.store);
-        document.getElementById('salonsComboDone').value = data.salonsComboDone;
-        // Пересобрать формы, зависящие от числа салонов
-        UI.recalculating = true;
-        renderAdminBlock(data);
-        renderOperatorBlock(data);
-        UI.recalculating = false;
-      }
       recalculate();
     });
+  });
+
+  document.getElementById('salonsTotal').addEventListener('change', (e) => {
+    let value = Math.max(0, Math.floor(Number(e.target.value) || 0));
+    const current = getActiveMonthData(UI.store).salonsTotal;
+
+    if (value < current) {
+      const ok = confirm(
+        'При уменьшении количества салонов данные по удаляемым салонам будут удалены. Продолжить?'
+      );
+      if (!ok) {
+        e.target.value = current;
+        return;
+      }
+    }
+
+    e.target.value = value;
+    updateMonthField(UI.store, (data) => {
+      data.salonsTotal = value;
+    });
+    const data = getActiveMonthData(UI.store);
+    document.getElementById('salonsComboDone').value = data.salonsComboDone;
+    UI.recalculating = true;
+    renderSalonCards(data);
+    renderAdminBlock(data);
+    renderOperatorBlock(data);
+    UI.recalculating = false;
+    recalculate();
+  });
+
+  document.getElementById('section-salons').addEventListener('input', (e) => {
+    const nameInput = e.target.closest('[data-salon-name]');
+    if (nameInput) {
+      const index = Number(nameInput.dataset.salonName);
+      updateMonthField(UI.store, (data) => {
+        if (data.salonsList[index]) data.salonsList[index].name = nameInput.value;
+      });
+      const card = nameInput.closest('.salon-identity-card');
+      const pill = card?.querySelector('.pill');
+      const data = getActiveMonthData(UI.store);
+      if (pill && data.salonsList[index]) {
+        pill.textContent = getSalonTitle(data.salonsList[index], index);
+      }
+      recalculate();
+    }
+  });
+
+  document.getElementById('section-salons').addEventListener('change', (e) => {
+    const nameInput = e.target.closest('[data-salon-name]');
+    if (nameInput) {
+      const data = getActiveMonthData(UI.store);
+      UI.recalculating = true;
+      renderAdminBlock(data);
+      renderOperatorBlock(data);
+      UI.recalculating = false;
+      recalculate();
+      return;
+    }
+
+    const opSelect = e.target.closest('[data-salon-operator]');
+    if (!opSelect) return;
+    const index = Number(opSelect.dataset.salonOperator);
+    updateMonthField(UI.store, (data) => {
+      if (data.salonsList[index]) data.salonsList[index].operator = opSelect.value;
+    });
+    const data = getActiveMonthData(UI.store);
+    UI.recalculating = true;
+    renderSalonCards(data);
+    renderAdminBlock(data);
+    renderOperatorBlock(data);
+    UI.recalculating = false;
+    recalculate();
   });
 
   document.getElementById('section-sales').addEventListener('input', (e) => {
@@ -1230,59 +1415,48 @@ function bindEvents() {
       return;
     }
 
-    if (e.target.id === 'photoReportPassed' || e.target.id === 'servicePassed' || e.target.id === 'txvPassed') {
-      const map = {
-        photoReportPassed: 'photoReportPassed',
-        servicePassed: 'servicePassed',
-        txvPassed: 'txvPassed',
-      };
+    const flag = e.target.closest('[data-salon-flag]');
+    if (flag) {
+      const index = Number(flag.dataset.salonIndex);
+      const key = flag.dataset.salonFlag;
       updateMonthField(UI.store, (data) => {
-        let value = Math.max(0, Math.floor(Number(e.target.value) || 0));
-        if (value > data.salonsTotal) {
-          value = data.salonsTotal;
-          e.target.value = value;
-          showToast('Нельзя указать больше салонов, чем в подчинении', true);
-        }
-        data.administrative[map[e.target.id]] = value;
+        if (data.salonsList[index]) data.salonsList[index][key] = flag.checked;
       });
+      const label = flag.closest('.salon-flag');
+      if (label) {
+        label.classList.toggle('is-done', flag.checked);
+        label.classList.toggle('is-fail', !flag.checked);
+        const span = label.querySelector('span');
+        const data = getActiveMonthData(UI.store);
+        const salon = data.salonsList[index];
+        if (span && salon) {
+          const name = getSalonDisplayName(salon, index);
+          if (key === 'photoPassed') {
+            span.textContent = `${name} — ${flag.checked ? '✅ Прошел' : '❌ Не прошел'}`;
+          } else {
+            span.textContent = `${name} — ${flag.checked ? '✅ Выполнил' : '❌ Не выполнил'}`;
+          }
+        }
+      }
       recalculate();
     }
   });
 
-  document.getElementById('section-operator').addEventListener('input', (e) => {
-    if (e.target.id === 'tele2Salons') {
-      updateMonthField(UI.store, (data) => {
-        let value = Math.max(0, Math.floor(Number(e.target.value) || 0));
-        if (value > data.salonsTotal) {
-          showToast('Tele2 не может быть больше общего числа салонов', true);
-        }
-        data.operator.tele2Salons = value;
-      });
-      const data = getActiveMonthData(UI.store);
-      document.getElementById('tele2Salons').value = data.operator.tele2Salons;
-      UI.recalculating = true;
-      renderOperatorBlock(data);
-      UI.recalculating = false;
-      recalculate();
-      return;
+  document.getElementById('section-operator').addEventListener('change', (e) => {
+    const toggle = e.target.closest('[data-tele2-list-index][data-tele2-kpi]');
+    if (!toggle) return;
+    const listIndex = Number(toggle.dataset.tele2ListIndex);
+    const kpiId = toggle.dataset.tele2Kpi;
+    updateMonthField(UI.store, (data) => {
+      if (!data.salonsList[listIndex]) return;
+      data.salonsList[listIndex].kpis[kpiId] = toggle.checked;
+    });
+    const label = toggle.closest('.kpi-toggle');
+    if (label) {
+      label.classList.toggle('is-done', toggle.checked);
+      label.classList.toggle('is-fail', !toggle.checked);
     }
-
-    const toggle = e.target.closest('[data-tele2-salon][data-tele2-kpi]');
-    if (toggle) {
-      const salonIndex = Number(toggle.dataset.tele2Salon);
-      const kpiId = toggle.dataset.tele2Kpi;
-      updateMonthField(UI.store, (data) => {
-        if (!data.operator.salons[salonIndex]) return;
-        data.operator.salons[salonIndex].kpis[kpiId] = toggle.checked;
-      });
-      // Обновить цвет toggle без полной перерисовки
-      const label = toggle.closest('.kpi-toggle');
-      if (label) {
-        label.classList.toggle('is-done', toggle.checked);
-        label.classList.toggle('is-fail', !toggle.checked);
-      }
-      recalculate();
-    }
+    recalculate();
   });
 
   document.body.addEventListener('change', (e) => {
@@ -1321,10 +1495,12 @@ function escapeHtml(str) {
 
 function initApp() {
   UI.store = loadStore();
+  if (!UI.store.uiCollapse) UI.store.uiCollapse = {};
   ensureActiveMonthData(UI.store);
   saveStore(UI.store);
 
   initPeriodSelects();
   bindEvents();
+  initCollapse();
   syncAll();
 }
