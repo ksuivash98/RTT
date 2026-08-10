@@ -122,6 +122,7 @@ function fillFormFromData(data) {
   renderEconomyKpiInputs(data);
   renderAdminBlock(data);
   renderOperatorBlock(data);
+  renderBlackListBlock(data);
   applyCollapseState();
 
   UI.recalculating = false;
@@ -238,7 +239,158 @@ function renderEconomyKpiInputs(data) {
 function renderConfigBlocks(result) {
   updateAdminBlockResults(result.administrative);
   updateOperatorBlockResults(result.operator);
-  renderBlackListBlock(result.blackList);
+  updateBlackListResults(result.blackList);
+}
+
+function renderBlackListBlock(data) {
+  const root = document.getElementById('blackListBlock');
+  if (!root) return;
+  const list = data.salonsList || [];
+  const monthBl = data.blackList || createEmptyMonthBlackList();
+
+  const salonRows = list
+    .map((salon, index) => {
+      const bl = salon.blackList || createEmptySalonBlackList();
+      const opTarget = BLACK_LIST.operatorKpi.targets[salon.operator];
+      const opLabel = opTarget
+        ? `${opTarget.label}, % (цель ≥${opTarget.target})`
+        : 'Ключевой KPI оператора (нет для «Другой»)';
+
+      return `
+        <article class="kpi-card">
+          <div class="kpi-card-head">
+            <h3>${escapeHtml(getSalonTitle(salon, index))}</h3>
+          </div>
+          <div class="bl-salon-sections">
+            <div class="bl-mini-section">
+              <h4>Работа с SIM</h4>
+              <div class="form-grid form-grid-2">
+                <label class="field">
+                  <span>Выполнение плана SIM, %</span>
+                  <input type="number" min="0" step="0.1" data-bl-salon="${index}" data-bl-field="simPlanPercent" value="${bl.simPlanPercent}" />
+                </label>
+                <label class="field">
+                  <span>Не выполнен план одной декады по SIM</span>
+                  <select data-bl-salon="${index}" data-bl-field="simDecadeFailed">
+                    <option value="0" ${!bl.simDecadeFailed ? 'selected' : ''}>Нет</option>
+                    <option value="1" ${bl.simDecadeFailed ? 'selected' : ''}>Да</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="bl-mini-section">
+              <h4>Качество и стандарты</h4>
+              <div class="form-grid form-grid-2">
+                <label class="field">
+                  <span>BMP текущего месяца, %</span>
+                  <input type="number" min="0" step="0.1" data-bl-salon="${index}" data-bl-field="bmpPercent" value="${bl.bmpPercent}" />
+                </label>
+                <label class="field">
+                  <span>BMP предыдущего месяца, %</span>
+                  <input type="number" min="0" step="0.1" data-bl-salon="${index}" data-bl-field="bmpPrevPercent" value="${bl.bmpPrevPercent}" />
+                </label>
+                <label class="field">
+                  <span>Q2M за март прошлого месяца (для Т2)</span>
+                  <select data-bl-salon="${index}" data-bl-field="q2mPassed">
+                    <option value="1" ${bl.q2mPassed ? 'selected' : ''}>Выполнен</option>
+                    <option value="0" ${!bl.q2mPassed ? 'selected' : ''}>Не выполнен</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="bl-mini-section">
+              <h4>Ключевые KPI оператора</h4>
+              <div class="form-grid form-grid-2">
+                <label class="field">
+                  <span>${escapeHtml(opLabel)}</span>
+                  <input type="number" min="0" step="0.1" data-bl-salon="${index}" data-bl-field="operatorKpiPercent" value="${bl.operatorKpiPercent}" ${
+        opTarget ? '' : 'disabled'
+      } />
+                </label>
+              </div>
+            </div>
+            <div class="bl-mini-section">
+              <h4>Положительные корректировки</h4>
+              <div class="form-grid form-grid-2">
+                <label class="field">
+                  <span>Качество SIM 4M без Экстра, %</span>
+                  <input type="number" min="0" step="0.1" data-bl-salon="${index}" data-bl-field="simQuality4mPercent" value="${bl.simQuality4mPercent}" />
+                </label>
+                <p class="kpi-note">SIM 110%+ и BMP ≥90% два месяца берутся из полей выше.</p>
+              </div>
+            </div>
+          </div>
+        </article>`;
+    })
+    .join('');
+
+  root.innerHTML = `
+    <div class="form-grid form-grid-2" style="margin-bottom:14px">
+      <label class="field">
+        <span>Превышение лимита Экстра (один раз на все салоны)</span>
+        <select id="blExtraLimit">
+          <option value="0" ${!monthBl.extraLimitExceeded ? 'selected' : ''}>Нет</option>
+          <option value="1" ${monthBl.extraLimitExceeded ? 'selected' : ''}>Да</option>
+        </select>
+      </label>
+      <div class="field">
+        <span>Диапазон коэффициента</span>
+        <div class="hint-box">мин 0,575 · макс 1,10 · старт 1,00 · только к бонусам</div>
+      </div>
+    </div>
+    <h3 class="subhead">Показатели по салонам</h3>
+    <div class="kpi-list">${salonRows || '<p class="kpi-note">Добавьте салоны в начале калькулятора</p>'}</div>
+    <h3 class="subhead">Расшифровка</h3>
+    <div id="blackListBreakdown"></div>`;
+}
+
+function updateBlackListResults(bl) {
+  const breakdown = document.getElementById('blackListBreakdown');
+  const strip = document.getElementById('blackListResultStrip');
+  if (!bl || !breakdown || !strip) return;
+
+  const reasonsBlock = (title, penaltyLabel, reasons) => `
+    <div class="bl-section ${reasons.length ? 'has-issues' : ''}">
+      <h4>${title} <span>${penaltyLabel}</span></h4>
+      ${
+        reasons.length
+          ? `<ul class="bl-reasons">${reasons
+              .map(
+                (r) =>
+                  `<li class="${r.severity === 'positive' ? 'is-positive' : 'is-negative'}">${escapeHtml(
+                    r.text
+                  )}</li>`
+              )
+              .join('')}</ul>`
+          : '<p class="kpi-note">Нарушений нет</p>'
+      }
+    </div>`;
+
+  breakdown.innerHTML = `
+    <div class="bl-summary-card">
+      <div class="kpi-metrics-grid">
+        <div class="kpi-metric"><span class="label">Исходный коэффициент</span><span class="value">×${formatCoeff(bl.startCoefficient)}</span></div>
+        <div class="kpi-metric is-negative"><span class="label">Работа с SIM</span><span class="value">−${formatPercent(bl.simPenalty * 100, 2)}</span></div>
+        <div class="kpi-metric is-negative"><span class="label">Качество и стандарты</span><span class="value">−${formatPercent(bl.qualityPenalty * 100, 2)}</span></div>
+        <div class="kpi-metric is-negative"><span class="label">Ключевые KPI</span><span class="value">−${formatPercent(bl.kpiPenalty * 100, 2)}</span></div>
+        <div class="kpi-metric is-positive"><span class="label">Положительные корректировки</span><span class="value">+${formatPercent(bl.positiveBonus * 100, 2)}</span></div>
+        <div class="kpi-metric is-brand"><span class="label">ИТОГОВЫЙ КОЭФФИЦИЕНТ</span><span class="value">×${formatCoeff(bl.coefficient)}</span></div>
+      </div>
+      ${bl.clamped ? `<p class="kpi-note">Применено ограничение диапазона (было ×${formatCoeff(bl.rawCoefficient)})</p>` : ''}
+    </div>
+    ${reasonsBlock('🔴 Работа с SIM', `−${formatPercent(bl.simPenalty * 100, 2)}`, bl.simReasons || [])}
+    ${reasonsBlock('🔴 Качество и стандарты', `−${formatPercent(bl.qualityPenalty * 100, 2)}`, bl.qualityReasons || [])}
+    ${reasonsBlock('🔴 Ключевые KPI', `−${formatPercent(bl.kpiPenalty * 100, 2)}`, bl.kpiReasons || [])}
+    ${reasonsBlock('🟢 Положительные корректировки', `+${formatPercent(bl.positiveBonus * 100, 2)}`, bl.positiveReasons || [])}
+  `;
+
+  strip.innerHTML = `
+    <div class="result-item"><span class="label">Бонус до чёрного списка</span><div class="value">${formatMoney(bl.bonusBefore || 0)}</div></div>
+    <div class="result-item"><span class="label">Коэффициент</span><div class="value">×${formatCoeff(bl.coefficient)}</div></div>
+    <div class="result-item is-brand"><span class="label">🟢 Бонус после</span><div class="value">${formatMoney(bl.bonusAfter || 0)}</div></div>
+    <div class="result-item is-negative"><span class="label">🔴 Потеря</span><div class="value">−${formatMoney(bl.loss || 0)}</div></div>
+    <div class="result-item is-warning"><span class="label">При коэфф. 1,00</span><div class="value">${formatMoney(bl.bonusAtOne || 0)}</div></div>
+    <div class="result-item is-warning"><span class="label">🟡 Можно вернуть</span><div class="value">+${formatMoney(bl.potentialPlus || 0)}</div></div>`;
 }
 
 function renderAdminBlock(data) {
@@ -504,42 +656,6 @@ function updateOperatorBlockResults(op) {
     <div class="result-item"><span class="label">Коэффициент</span><div class="value">×${formatCoeff(op.coefficient)}</div></div>
     <div class="result-item is-brand"><span class="label">🟢 Текущий бонус</span><div class="value">${formatMoney(op.bonus)}</div></div>
     <div class="result-item is-negative"><span class="label">🔴 Потеря к бюджету</span><div class="value">−${formatMoney(op.loss)}</div></div>`;
-}
-
-function renderBlackListBlock(calc) {
-  const root = document.getElementById('blackListBlock');
-  if (!blackListRules.length) {
-    root.className = 'empty-config';
-    root.innerHTML =
-      '<p>Условия ещё не заданы. Добавьте правила в <code>blackListRules</code> в файле <code>data.js</code>.</p>';
-    return;
-  }
-
-  root.className = 'kpi-list';
-  root.innerHTML = calc.items
-    .map((item) => {
-      return `
-        <article class="kpi-card">
-          <div class="kpi-card-head">
-            <h3>${escapeHtml(item.name)}</h3>
-            <span class="pill ${item.violated ? 'is-negative' : 'is-positive'}">${
-              item.violated ? 'Нарушение' : 'Ок'
-            }</span>
-          </div>
-          <p class="kpi-note">${escapeHtml(item.description || '')}</p>
-          <label class="field">
-            <span>
-              <input type="checkbox" data-blacklist-id="${item.id}" ${item.violated ? 'checked' : ''} />
-              Есть нарушение
-            </span>
-          </label>
-          <div class="kpi-metrics" style="margin-top:12px">
-            <div class="kpi-metric is-negative"><span class="label">Штраф</span><span class="value">${formatMoney(item.penalty)}</span></div>
-            <div class="kpi-metric"><span class="label">Влияние</span><span class="value">${escapeHtml(item.impact || '—')}</span></div>
-          </div>
-        </article>`;
-    })
-    .join('');
 }
 
 function renderAnalytics(result) {
@@ -1027,6 +1143,22 @@ function renderLosses(result) {
     });
   }
 
+  if (result.blackList) {
+    rows.push({
+      title: 'Чёрный список (к бонусам)',
+      completion: null,
+      efficiency: result.blackList.coefficient,
+      current: result.blackList.bonusAfter,
+      next: null,
+      needed: null,
+      max: result.blackList.bonusAtOne,
+      plus: result.blackList.potentialPlus,
+      reason: `До ×1,00: ${formatMoney(result.blackList.bonusBefore)} · потеря ${formatMoney(
+        result.blackList.loss
+      )}`,
+    });
+  }
+
   document.getElementById('lossesBlock').innerHTML = `
     <div class="loss-grid">
       ${rows
@@ -1076,6 +1208,7 @@ function renderTotal(result) {
   const monthName = MONTHS.find((m) => m.value === result.month)?.name || result.month;
   document.getElementById('headerPeriodLabel').textContent = `${getActiveEmployee(UI.store).name} · ${monthName} ${result.year}`;
 
+  const bl = result.blackList;
   document.getElementById('totalBlock').innerHTML = `
     <div class="total-grid">
       <div class="total-row">
@@ -1098,13 +1231,25 @@ function renderTotal(result) {
         <span class="label">Бонус за продажи</span>
         <span class="value">${formatMoney(result.sales.total)}</span>
       </div>
-      <div class="total-row is-negative">
-        <span class="label">Чёрный список</span>
-        <span class="value">${result.totalPenalties > 0 ? '−' : ''}${formatMoney(result.totalPenalties)}</span>
+      <div class="total-row">
+        <span class="label">Бонусная часть до чёрного списка</span>
+        <span class="value">${formatMoney(bl.bonusBefore)}</span>
       </div>
       <div class="total-row">
-        <span class="label">Общий бонус</span>
-        <span class="value">${formatMoney(result.totalBonus)}</span>
+        <span class="label">Коэффициент чёрного списка</span>
+        <span class="value">×${formatCoeff(bl.coefficient)}</span>
+      </div>
+      <div class="total-row is-brand">
+        <span class="label">Бонусная часть после чёрного списка</span>
+        <span class="value">${formatMoney(bl.bonusAfter)}</span>
+      </div>
+      <div class="total-row is-negative">
+        <span class="label">Потеря из-за чёрного списка</span>
+        <span class="value">−${formatMoney(bl.loss)}</span>
+      </div>
+      <div class="total-row is-warning">
+        <span class="label">Можно вернуть (при ×1,00)</span>
+        <span class="value">+${formatMoney(bl.potentialPlus)}</span>
       </div>
       <div class="total-row grand">
         <span class="label">ИТОГОВАЯ ЗАРПЛАТА</span>
@@ -1114,13 +1259,12 @@ function renderTotal(result) {
 
   document.getElementById('compositionBlock').innerHTML = `
     <div class="total-grid">
-      <div class="total-row"><span class="label">Оклад</span><span class="value">${formatMoney(result.fixedSalary)}</span></div>
-      <div class="total-row is-positive"><span class="label">Экономический блок</span><span class="value">${formatMoney(result.economy.bonus)}</span></div>
-      <div class="total-row is-positive"><span class="label">Административный блок</span><span class="value">${formatMoney(result.administrative.bonus)}</span></div>
-      <div class="total-row is-positive"><span class="label">Операторский блок</span><span class="value">${formatMoney(result.operator.bonus)}</span></div>
-      <div class="total-row is-positive"><span class="label">Продажи</span><span class="value">${formatMoney(result.sales.total)}</span></div>
-      <div class="total-row is-negative"><span class="label">Чёрный список</span><span class="value">${result.totalPenalties > 0 ? '−' : ''}${formatMoney(result.totalPenalties)}</span></div>
-      <div class="total-row grand"><span class="label">ИТОГО</span><span class="value">${formatMoney(result.totalPay)}</span></div>
+      <div class="total-row"><span class="label">Окладная часть</span><span class="value">${formatMoney(result.fixedSalary)}</span></div>
+      <div class="total-row is-positive"><span class="label">Бонусы до чёрного списка</span><span class="value">${formatMoney(bl.bonusBefore)}</span></div>
+      <div class="total-row"><span class="label">× Коэффициент чёрного списка</span><span class="value">×${formatCoeff(bl.coefficient)}</span></div>
+      <div class="total-row is-brand"><span class="label">Бонусы после чёрного списка</span><span class="value">${formatMoney(bl.bonusAfter)}</span></div>
+      <div class="total-row is-negative"><span class="label">Потеря</span><span class="value">−${formatMoney(bl.loss)}</span></div>
+      <div class="total-row grand"><span class="label">ИТОГО (оклад + бонус после)</span><span class="value">${formatMoney(result.totalPay)}</span></div>
     </div>`;
 }
 
@@ -1147,18 +1291,18 @@ function updatePanelSums(result) {
     economy: result.economy.bonus,
     admin: result.administrative.bonus,
     operator: result.operator.bonus,
-    blacklist: -result.totalPenalties,
     sales: result.sales.total,
   };
   Object.entries(map).forEach(([key, value]) => {
     const el = document.querySelector(`[data-panel-sum="${key}"]`);
     if (!el) return;
-    if (key === 'blacklist') {
-      el.textContent = value < 0 ? `−${formatMoney(Math.abs(value))}` : formatMoney(0);
-    } else {
-      el.textContent = formatMoney(value);
-    }
+    el.textContent = formatMoney(value);
   });
+
+  const blSum = document.querySelector('[data-panel-sum="blacklist"]');
+  if (blSum) {
+    blSum.textContent = `×${formatCoeff(result.blackList?.coefficient ?? 1)}`;
+  }
 }
 
 function applyCollapseState() {
@@ -1320,6 +1464,7 @@ function bindEvents() {
     renderSalonCards(data);
     renderAdminBlock(data);
     renderOperatorBlock(data);
+    renderBlackListBlock(data);
     UI.recalculating = false;
     recalculate();
   });
@@ -1348,6 +1493,7 @@ function bindEvents() {
       UI.recalculating = true;
       renderAdminBlock(data);
       renderOperatorBlock(data);
+      renderBlackListBlock(data);
       UI.recalculating = false;
       recalculate();
       return;
@@ -1364,7 +1510,51 @@ function bindEvents() {
     renderSalonCards(data);
     renderAdminBlock(data);
     renderOperatorBlock(data);
+    renderBlackListBlock(data);
     UI.recalculating = false;
+    recalculate();
+  });
+
+  document.getElementById('section-blacklist').addEventListener('input', (e) => {
+    const field = e.target.closest('[data-bl-salon][data-bl-field]');
+    if (!field || field.tagName === 'SELECT') return;
+    const index = Number(field.dataset.blSalon);
+    const key = field.dataset.blField;
+    updateMonthField(UI.store, (data) => {
+      if (!data.salonsList[index]) return;
+      if (!data.salonsList[index].blackList) {
+        data.salonsList[index].blackList = createEmptySalonBlackList();
+      }
+      data.salonsList[index].blackList[key] = Number(field.value) || 0;
+    });
+    recalculate();
+  });
+
+  document.getElementById('section-blacklist').addEventListener('change', (e) => {
+    if (e.target.id === 'blExtraLimit') {
+      updateMonthField(UI.store, (data) => {
+        if (!data.blackList) data.blackList = createEmptyMonthBlackList();
+        data.blackList.extraLimitExceeded = e.target.value === '1';
+      });
+      recalculate();
+      return;
+    }
+
+    const field = e.target.closest('[data-bl-salon][data-bl-field]');
+    if (!field) return;
+    const index = Number(field.dataset.blSalon);
+    const key = field.dataset.blField;
+    updateMonthField(UI.store, (data) => {
+      if (!data.salonsList[index]) return;
+      if (!data.salonsList[index].blackList) {
+        data.salonsList[index].blackList = createEmptySalonBlackList();
+      }
+      if (key === 'simDecadeFailed' || key === 'q2mPassed') {
+        data.salonsList[index].blackList[key] = field.value === '1';
+      } else {
+        data.salonsList[index].blackList[key] = Number(field.value) || 0;
+      }
+    });
     recalculate();
   });
 
@@ -1456,18 +1646,6 @@ function bindEvents() {
       label.classList.toggle('is-done', toggle.checked);
       label.classList.toggle('is-fail', !toggle.checked);
     }
-    recalculate();
-  });
-
-  document.body.addEventListener('change', (e) => {
-    const box = e.target.closest('[data-blacklist-id]');
-    if (!box) return;
-    updateMonthField(UI.store, (data) => {
-      if (!data.blackList[box.dataset.blacklistId]) {
-        data.blackList[box.dataset.blacklistId] = {};
-      }
-      data.blackList[box.dataset.blacklistId].violated = box.checked;
-    });
     recalculate();
   });
 

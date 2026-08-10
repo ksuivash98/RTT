@@ -109,7 +109,7 @@ function mergeMonthData(data) {
     },
     administrative,
     operator,
-    blackList: { ...(data.blackList || {}) },
+    blackList: mergeMonthBlackList(data.blackList),
   };
 }
 
@@ -169,9 +169,47 @@ function mergeSalonsList(data, salonsTotal) {
       servicePassed: Boolean(prev.servicePassed),
       txvPassed: Boolean(prev.txvPassed),
       kpis,
+      blackList: mergeSalonBlackList(prev.blackList),
     });
   }
   return list;
+}
+
+function mergeSalonBlackList(raw) {
+  const base = createEmptySalonBlackList();
+  const src = raw && typeof raw === 'object' ? raw : {};
+  return {
+    simPlanPercent:
+      src.simPlanPercent === undefined || src.simPlanPercent === null
+        ? base.simPlanPercent
+        : Number(src.simPlanPercent),
+    simDecadeFailed: Boolean(src.simDecadeFailed),
+    bmpPercent:
+      src.bmpPercent === undefined || src.bmpPercent === null
+        ? base.bmpPercent
+        : Number(src.bmpPercent),
+    bmpPrevPercent:
+      src.bmpPrevPercent === undefined || src.bmpPrevPercent === null
+        ? base.bmpPrevPercent
+        : Number(src.bmpPrevPercent),
+    q2mPassed: src.q2mPassed === undefined ? base.q2mPassed : Boolean(src.q2mPassed),
+    operatorKpiPercent:
+      src.operatorKpiPercent === undefined || src.operatorKpiPercent === null
+        ? base.operatorKpiPercent
+        : Number(src.operatorKpiPercent),
+    simQuality4mPercent:
+      src.simQuality4mPercent === undefined || src.simQuality4mPercent === null
+        ? base.simQuality4mPercent
+        : Number(src.simQuality4mPercent),
+  };
+}
+
+function mergeMonthBlackList(raw) {
+  const base = createEmptyMonthBlackList();
+  const src = raw && typeof raw === 'object' ? raw : {};
+  return {
+    extraLimitExceeded: Boolean(src.extraLimitExceeded),
+  };
 }
 
 function mergeAdministrativeData(raw, salonsList) {

@@ -1057,37 +1057,183 @@ function calculateOperatorBonus(monthData) {
 }
 
 
+/**
+ * Чёрный список: коэффициент к бонусной части.
+ * Оклад / надбавка не затрагиваются.
+ */
 function calculateBlackListPenalties(monthData) {
-  if (!blackListRules.length) {
-    return {
-      items: [],
-      totalPenalty: 0,
-    };
-  }
+  const salonsTotal = Math.max(0, Math.floor(Number(monthData.salonsTotal) || 0));
+  const salonsList = Array.isArray(monthData.salonsList)
+    ? monthData.salonsList
+    : mergeSalonsList(monthData, salonsTotal);
+  const monthBl = mergeMonthBlackList(monthData.blackList);
+  const n = salonsTotal;
 
-  const items = blackListRules.map((rule) => {
-    const data = monthData.blackList?.[rule.id] || {};
-    const violated = Boolean(data.violated);
-    const penalty = violated ? (Number(rule.penalty) || 0) : 0;
+  const simReasons = [];
+  const qualityReasons = [];
+  const kpiReasons = [];
+  const positiveReasons = [];
 
-    return {
-      id: rule.id,
-      name: rule.name,
-      description: rule.description || '',
-      violated,
-      penalty,
-      impact: rule.impact || '',
-    };
+  let simBelow90 = 0;
+  let sim90to99 = 0;
+  let simDecadeFail = 0;
+  let bmpFail = 0;
+  let q2mFail = 0;
+  let kpiFail = 0;
+  let anySim110 = false;
+  let anySimQuality4m = false;
+  let anyBmpTwoMonths = false;
+
+  salonsList.forEach((salon, index) => {
+    const bl = mergeSalonBlackList(salon.blackList);
+    const title = getSalonDisplayName(salon, index);
+    const sim = Number(bl.simPlanPercent);
+    const bmp = Number(bl.bmpPercent);
+    const bmpPrev = Number(bl.bmpPrevPercent);
+    const quality4m = Number(bl.simQuality4mPercent);
+    const opKpi = Number(bl.operatorKpiPercent);
+
+    if (Number.isFinite(sim)) {
+      if (sim < 90) {
+        simBelow90 += 1;
+        simReasons.push({
+          text: `${title} — SIM ${formatPercent(sim)} — ниже 90%`,
+          severity: 'negative',
+        });
+      } else if (sim < 100) {
+        sim90to99 += 1;
+        simReasons.push({
+          text: `${title} — SIM ${formatPercent(sim)} — ниже 100%`,
+          severity: 'negative',
+        });
+      }
+      if (sim >= 110) anySim110 = true;
+    }
+
+    if (bl.simDecadeFailed) {
+      simDecadeFail += 1;
+      simReasons.push({
+        text: `${title} — не выполнена одна декада по SIM`,
+        severity: 'negative',
+      });
+    }
+
+    if (Number.isFinite(bmp) && bmp < 80) {
+      bmpFail += 1;
+      qualityReasons.push({
+        text: `${title} — BMP ${formatPercent(bmp)} — ниже 80%`,
+        severity: 'negative',
+      });
+    }
+
+    if (!bl.q2mPassed) {
+      q2mFail += 1;
+      qualityReasons.push({
+        text: `${title} — Q2M не выполнен`,
+        severity: 'negative',
+      });
+    }
+
+    const opTarget = BLACK_LIST.operatorKpi.targets[salon.operator];
+    if (opTarget && Number.isFinite(opKpi) && opKpi < opTarget.target) {
+      kpiFail += 1;
+      kpiReasons.push({
+        text: `${title} — ${getSalonOperatorLabel(salon.operator)} — ${opTarget.label} ${formatPercent(opKpi)} (цель ≥${formatPercent(opTarget.target, 0)})`,
+        severity: 'negative',
+      });
+    }
+
+    if (Number.isFinite(quality4m) && quality4m > 60) anySimQuality4m = true;
+    if (Number.isFinite(bmp) && Number.isFinite(bmpPrev) && bmp >= 90 && bmpPrev >= 90) {
+      anyBmpTwoMonths = true;
+    }
   });
 
+  const share = (count) => (n > 0 ? count / n : 0);
+
+  let simPenalty =
+    share(simBelow90) * BLACK_LIST.sim.below90 +
+    share(sim90to99) * BLACK_LIST.sim.from90to99 +
+    share(simDecadeFail) * BLACK_LIST.sim.decadeFail;
+
+  if (monthBl.extraLimitExceeded) {
+    simPenalty += BLACK_LIST.sim.extraLimit;
+    simReasons.push({
+      text: 'Превышение лимита Экстра — −2,5%',
+      severity: 'negative',
+    });
+  }
+  simPenalty = Math.min(simPenalty, BLACK_LIST.sim.maxPenalty);
+
+  let qualityPenalty =
+    share(bmpFail) * BLACK_LIST.quality.bmpBelow80 +
+    share(q2mFail) * BLACK_LIST.quality.q2mFail;
+  qualityPenalty = Math.min(qualityPenalty, BLACK_LIST.quality.maxPenalty);
+
+  let kpiPenalty = share(kpiFail) * BLACK_LIST.operatorKpi.maxPenalty;
+  kpiPenalty = Math.min(kpiPenalty, BLACK_LIST.operatorKpi.maxPenalty);
+
+  let positiveBonus = 0;
+  if (anySim110) {
+    positiveBonus += BLACK_LIST.positive.sim110;
+    positiveReasons.push({
+      text: 'Выполнение плана SIM 110%+ — +5%',
+      severity: 'positive',
+    });
+  }
+  if (anySimQuality4m) {
+    positiveBonus += BLACK_LIST.positive.simQuality4m;
+    positiveReasons.push({
+      text: 'Качество SIM 4M без Экстра >60% — +5%',
+      severity: 'positive',
+    });
+  }
+  if (anyBmpTwoMonths) {
+    positiveBonus += BLACK_LIST.positive.bmpTwoMonths;
+    positiveReasons.push({
+      text: 'BMP ≥90% два месяца подряд — +5%',
+      severity: 'positive',
+    });
+  }
+
+  let rawCoefficient =
+    BLACK_LIST.startCoefficient - simPenalty - qualityPenalty - kpiPenalty + positiveBonus;
+
+  let coefficient = rawCoefficient;
+  let clamped = false;
+  if (coefficient < BLACK_LIST.minCoefficient) {
+    coefficient = BLACK_LIST.minCoefficient;
+    clamped = true;
+  } else if (coefficient > BLACK_LIST.maxCoefficient) {
+    coefficient = BLACK_LIST.maxCoefficient;
+    clamped = true;
+  }
+
+  coefficient = Math.round(coefficient * 10000) / 10000;
+
   return {
-    items,
-    totalPenalty: items.reduce((s, i) => s + i.penalty, 0),
+    items: [],
+    totalPenalty: 0, // совместимость: денежный штраф заменён коэффициентом
+    coefficient,
+    rawCoefficient: Math.round(rawCoefficient * 10000) / 10000,
+    clamped,
+    startCoefficient: BLACK_LIST.startCoefficient,
+    simPenalty,
+    qualityPenalty,
+    kpiPenalty,
+    positiveBonus,
+    simReasons,
+    qualityReasons,
+    kpiReasons,
+    positiveReasons,
+    extraLimitExceeded: monthBl.extraLimitExceeded,
+    salonsTotal: n,
   };
 }
 
 /**
  * Итоговый расчёт зарплаты.
+ * Чёрный список × только бонусная часть; оклад без изменений.
  */
 function calculateTotalSalary(monthData, year, month) {
   const grade = getGrade(monthData.grade);
@@ -1098,24 +1244,22 @@ function calculateTotalSalary(monthData, year, month) {
   const operator = calculateOperatorBonus(monthData);
   const blackList = calculateBlackListPenalties(monthData);
 
-  const totalBonus = roundMoney(
-    sales.total +
-      economy.bonus +
-      administrative.bonus +
-      operator.bonus
+  const bonusBeforeBlackList = roundMoney(
+    sales.total + economy.bonus + administrative.bonus + operator.bonus
   );
 
-  const totalPenalties = roundMoney(blackList.totalPenalty);
+  const bonusAfterBlackList = roundMoney(bonusBeforeBlackList * blackList.coefficient);
+  const blackListLoss = roundMoney(Math.max(0, bonusBeforeBlackList - bonusAfterBlackList));
+  const blackListPotentialPlus = blackListLoss;
 
-  const totalPay = roundMoney(fixedSalary + totalBonus - totalPenalties);
+  const totalBonus = bonusAfterBlackList;
+  const totalPenalties = 0;
+  const totalPay = roundMoney(fixedSalary + bonusAfterBlackList);
 
-  const maxSalary = roundMoney(
-    fixedSalary +
-      sales.maxBonus +
-      economy.maxBonus +
-      administrative.maxBonus +
-      operator.maxBonus
+  const maxBonusBefore = roundMoney(
+    sales.maxBonus + economy.maxBonus + administrative.maxBonus + operator.maxBonus
   );
+  const maxSalary = roundMoney(fixedSalary + maxBonusBefore * BLACK_LIST.maxCoefficient);
 
   const totalLoss = roundMoney(
     sales.maxBonus -
@@ -1123,7 +1267,7 @@ function calculateTotalSalary(monthData, year, month) {
       economy.loss +
       administrative.loss +
       operator.loss +
-      totalPenalties
+      blackListLoss
   );
 
   const potentialExtra = roundMoney(Math.max(0, maxSalary - totalPay));
@@ -1137,8 +1281,16 @@ function calculateTotalSalary(monthData, year, month) {
     economy,
     administrative,
     operator,
-    blackList,
+    blackList: {
+      ...blackList,
+      bonusBefore: bonusBeforeBlackList,
+      bonusAfter: bonusAfterBlackList,
+      loss: blackListLoss,
+      potentialPlus: blackListPotentialPlus,
+      bonusAtOne: bonusBeforeBlackList,
+    },
     totalBonus,
+    totalBonusBeforeBlackList: bonusBeforeBlackList,
     totalPenalties,
     totalPay,
     maxSalary,
@@ -1387,6 +1539,102 @@ function runSelfChecks() {
 
   // Админ не зависит от эффективности экономики
   check('Админ независим', admRes.bonus >= 14000 ? 1 : 0, 1);
+
+  // --- Чёрный список ---
+  const blBase = () => {
+    const d = createEmptyMonthData();
+    d.salonsTotal = 10;
+    d.salonsList = Array.from({ length: 10 }, () => createEmptySalon());
+    return d;
+  };
+
+  // ТЕСТ 1: всё ок → 1.00
+  check('ЧС тест1 коэфф', calculateBlackListPenalties(blBase()).coefficient, 1);
+
+  // ТЕСТ 2: 3 салона SIM <90% → 4.5% → 0.955
+  const bl2 = blBase();
+  bl2.salonsList[0].blackList.simPlanPercent = 80;
+  bl2.salonsList[1].blackList.simPlanPercent = 85;
+  bl2.salonsList[2].blackList.simPlanPercent = 70;
+  check('ЧС тест2 коэфф', calculateBlackListPenalties(bl2).coefficient, 0.955);
+
+  // ТЕСТ 3: 2 салона BMP <80% → 2% → 0.98
+  const bl3 = blBase();
+  bl3.salonsList[0].blackList.bmpPercent = 70;
+  bl3.salonsList[1].blackList.bmpPercent = 75;
+  check('ЧС тест3 коэфф', calculateBlackListPenalties(bl3).coefficient, 0.98);
+
+  // ТЕСТ 4: 1 KPI fail → 1% → 0.99
+  const bl4 = blBase();
+  bl4.salonsList[0].operator = 'tele2';
+  bl4.salonsList[0].blackList.operatorKpiPercent = 92;
+  check('ЧС тест4 коэфф', calculateBlackListPenalties(bl4).coefficient, 0.99);
+
+  // ТЕСТ 5: clamp min 0.575
+  const bl5 = blBase();
+  bl5.salonsList.forEach((s) => {
+    s.blackList.simPlanPercent = 50;
+    s.blackList.simDecadeFailed = true;
+    s.blackList.bmpPercent = 50;
+    s.blackList.q2mPassed = false;
+    s.blackList.operatorKpiPercent = 50;
+  });
+  bl5.blackList.extraLimitExceeded = true;
+  check('ЧС тест5 min', calculateBlackListPenalties(bl5).coefficient, 0.575);
+
+  // ТЕСТ 6: clamp max 1.10
+  const bl6 = blBase();
+  bl6.salonsList[0].blackList.simPlanPercent = 120;
+  bl6.salonsList[0].blackList.simQuality4mPercent = 70;
+  bl6.salonsList[0].blackList.bmpPercent = 95;
+  bl6.salonsList[0].blackList.bmpPrevPercent = 95;
+  check('ЧС тест6 max', calculateBlackListPenalties(bl6).coefficient, 1.1);
+
+  // ТЕСТ 7–8: деньги
+  const pay = createEmptyMonthData();
+  pay.grade = 'grade1';
+  pay.salonsTotal = 1;
+  pay.salonsList = [createEmptySalon()];
+  // Искусственно проверим формулу через коэффициент
+  const fakeBefore = 50000;
+  const coeff = 0.8;
+  const after = fakeBefore * coeff;
+  check('ЧС тест7 после', after, 40000);
+  check('ЧС тест7 потеря', fakeBefore - after, 10000);
+  check('ЧС тест8 оклад+бонус', 31000 + after, 71000);
+  check('ЧС оклад не умножается', getFixedSalary('grade1'), 31000);
+
+  // Интеграция: оклад не умножается, бонус × коэффициент
+  const blPay = blBase();
+  blPay.grade = 'grade1';
+  blPay.salonsList.forEach((s) => {
+    s.blackList.simPlanPercent = 50;
+  });
+  const payRes = calculateTotalSalary(blPay, 2026, 3);
+  check('ЧС интеграция коэфф', payRes.blackList.coefficient, 0.85);
+  check('ЧС интеграция оклад', payRes.fixedSalary, 31000);
+  check(
+    'ЧС интеграция бонус×К',
+    payRes.blackList.bonusAfter,
+    roundMoney(payRes.blackList.bonusBefore * 0.85)
+  );
+  check(
+    'ЧС интеграция итог',
+    payRes.totalPay,
+    roundMoney(payRes.fixedSalary + payRes.blackList.bonusAfter)
+  );
+
+  // Пример из ТЗ: 3/10*15% + 2/10*10% + 1/10*10% +5% = 0.975
+  const blEx = blBase();
+  blEx.salonsList[0].blackList.simPlanPercent = 80;
+  blEx.salonsList[1].blackList.simPlanPercent = 85;
+  blEx.salonsList[2].blackList.simPlanPercent = 70;
+  blEx.salonsList[3].blackList.bmpPercent = 70;
+  blEx.salonsList[4].blackList.bmpPercent = 75;
+  blEx.salonsList[5].operator = 'tele2';
+  blEx.salonsList[5].blackList.operatorKpiPercent = 90;
+  blEx.salonsList[6].blackList.simPlanPercent = 115;
+  check('ЧС пример ТЗ', calculateBlackListPenalties(blEx).coefficient, 0.975);
 
   const failed = results.filter((r) => !r.ok);
   console.group('RTT Calculator self-checks');

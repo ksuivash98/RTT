@@ -168,14 +168,13 @@
         <span class="collapse-icon" aria-hidden="true">▼</span>
         <span class="panel-toggle-main">
           <strong>Чёрный список</strong>
-          <small>Штрафы и нарушения</small>
+          <small>Коэффициент только к бонусной части</small>
         </span>
-        <span class="panel-toggle-sum" data-panel-sum="blacklist">0 ₽</span>
+        <span class="panel-toggle-sum" data-panel-sum="blacklist">×1,00</span>
       </button>
       <div class="panel-body" id="section-blacklist-body">
-        <div id="blackListBlock" class="empty-config">
-          <p>Условия ещё не заданы. Добавьте правила в <code>blackListRules</code> в файле <code>data.js</code>.</p>
-        </div>
+        <div id="blackListBlock"></div>
+        <div class="result-strip" id="blackListResultStrip"></div>
       </div>
     </section>
 
@@ -233,7 +232,7 @@
     <section class="panel panel-total" id="section-total">
       <div class="panel-head">
         <h2>Итоговая зарплата</h2>
-        <p>Оклад + бонусы − штрафы</p>
+        <p>Оклад + бонусная часть после чёрного списка</p>
       </div>
       <div id="totalBlock"></div>
     </section>

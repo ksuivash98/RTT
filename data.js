@@ -279,10 +279,63 @@ const salonOperators = [
 ];
 
 /**
- * Пустая конфигурация чёрного списка.
- * Каждое условие: название, описание, нарушение, штраф, влияние на бонус.
+ * Правила чёрного списка (константы).
+ * Коэффициент применяется только к бонусной части.
  */
-const blackListRules = [];
+const BLACK_LIST = {
+  startCoefficient: 1,
+  minCoefficient: 0.575,
+  maxCoefficient: 1.1,
+  sim: {
+    maxPenalty: 0.175,
+    below90: 0.15,
+    from90to99: 0.1,
+    decadeFail: 0.025,
+    extraLimit: 0.025,
+  },
+  quality: {
+    maxPenalty: 0.15,
+    bmpBelow80: 0.1,
+    q2mFail: 0.05,
+  },
+  operatorKpi: {
+    maxPenalty: 0.1,
+    targets: {
+      tele2: { field: 'conversionSim', label: 'Конверсия SIM', target: 100 },
+      megafon: { field: 'revenueMmYota', label: 'Выручка 1 ММ МФ + Yota', target: 95 },
+      mts: { field: 'nps', label: 'NPS', target: 100 },
+      beeline: { field: 'activity1to15', label: 'Активность 1–15', target: 100 },
+    },
+  },
+  positive: {
+    sim110: 0.05,
+    simQuality4m: 0.05,
+    bmpTwoMonths: 0.05,
+  },
+};
+
+/**
+ * Пустая конфигурация чёрного списка (месячные флаги).
+ */
+const blackListRules = []; // совместимость
+
+function createEmptySalonBlackList() {
+  return {
+    simPlanPercent: 100,
+    simDecadeFailed: false,
+    bmpPercent: 80,
+    bmpPrevPercent: 80,
+    q2mPassed: true,
+    operatorKpiPercent: 100,
+    simQuality4mPercent: 0,
+  };
+}
+
+function createEmptyMonthBlackList() {
+  return {
+    extraLimitExceeded: false,
+  };
+}
 
 /** Ключ LocalStorage. */
 const STORAGE_KEY = 'rtt_manager_salary_calculator_v1';
@@ -303,6 +356,7 @@ function createEmptySalon() {
     servicePassed: false,
     txvPassed: false,
     kpis: createEmptyTele2SalonKpis(),
+    blackList: createEmptySalonBlackList(),
   };
 }
 
@@ -373,7 +427,7 @@ function createEmptyMonthData() {
     economy,
     administrative: createEmptyAdministrativeData(),
     operator: createEmptyOperatorData(),
-    blackList: {},
+    blackList: createEmptyMonthBlackList(),
   };
 }
 
