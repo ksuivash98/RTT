@@ -2,14 +2,38 @@
  * LocalStorage: сотрудники и помесячные расчёты.
  */
 
-function loadStore() {
+function saveStore(store) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    return true;
+  } catch (e) {
+    console.warn('Не удалось сохранить LocalStorage', e);
+    return false;
+  }
+}
+
+function loadStore() {
+  let raw = null;
+  try {
+    raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return createDefaultStore();
     const parsed = JSON.parse(raw);
     return normalizeStore(parsed);
   } catch (e) {
-    console.warn('Не удалось прочитать LocalStorage, создаём новое хранилище', e);
+    console.warn('Не удалось прочитать LocalStorage, пробуем восстановить', e);
+    if (raw) {
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_backup`, raw);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    try {
+      const backup = localStorage.getItem(`${STORAGE_KEY}_backup`);
+      if (backup) return normalizeStore(JSON.parse(backup));
+    } catch (_) {
+      /* ignore */
+    }
     return createDefaultStore();
   }
 }
@@ -29,23 +53,69 @@ function createDefaultStore() {
   };
 }
 
+/**
+ * Приводит ключи месяцев к виду YYYY-MM.
+ * Старые ключи вида 2026-8 больше не теряются.
+ */
+function canonicalizeEmployeeMonths(months) {
+  const source = months && typeof months === 'object' ? months : {};
+  const result = {};
+
+  const richness = (data) => {
+    if (!data || typeof data !== 'object') return -1;
+    const salons = Math.max(0, Math.floor(Number(data.salonsTotal) || 0));
+    const named = Array.isArray(data.salonsList)
+      ? data.salonsList.filter((s) => String(s?.name || '').trim()).length
+      : 0;
+    const sales = data.salesValues ? Object.keys(data.salesValues).length : 0;
+    return salons * 1000 + named * 10 + sales;
+  };
+
+  Object.keys(source).forEach((key) => {
+    const parts = String(key).split('-');
+    if (parts.length < 2) return;
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+      return;
+    }
+    const canonical = periodKey(year, month);
+    const data = source[key];
+    if (!result[canonical] || richness(data) > richness(result[canonical])) {
+      result[canonical] = data;
+    }
+  });
+
+  return result;
+}
+
 function normalizeStore(store) {
   if (!store || !Array.isArray(store.employees)) {
     return createDefaultStore();
   }
 
   store.employees = store.employees.map((emp) => {
-    const normalized = {
-      id: emp.id || `emp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      name: emp.name || 'Без имени',
-      months: emp.months && typeof emp.months === 'object' ? emp.months : {},
-    };
+    try {
+      const normalized = {
+        id: emp.id || `emp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        name: emp.name || 'Без имени',
+        months: canonicalizeEmployeeMonths(emp.months),
+      };
 
-    Object.keys(normalized.months).forEach((key) => {
-      normalized.months[key] = mergeMonthData(normalized.months[key]);
-    });
+      Object.keys(normalized.months).forEach((key) => {
+        try {
+          normalized.months[key] = mergeMonthData(normalized.months[key]);
+        } catch (err) {
+          console.warn('Не удалось нормализовать период', key, err);
+          normalized.months[key] = createEmptyMonthData();
+        }
+      });
 
-    return normalized;
+      return normalized;
+    } catch (err) {
+      console.warn('Не удалось нормализовать сотрудника', err);
+      return createEmptyEmployee(emp?.name || 'Без имени');
+    }
   });
 
   if (!store.employees.length) {
@@ -274,10 +344,6 @@ function getTele2SalonsWithMeta(salonsList) {
   return result;
 }
 
-function saveStore(store) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-}
-
 function getActiveEmployee(store) {
   return store.employees.find((e) => e.id === store.activeEmployeeId) || store.employees[0];
 }
@@ -288,6 +354,11 @@ function getActivePeriodKey(store) {
 
 function ensureActiveMonthData(store) {
   const employee = getActiveEmployee(store);
+  if (!employee.months || typeof employee.months !== 'object') {
+    employee.months = {};
+  }
+  employee.months = canonicalizeEmployeeMonths(employee.months);
+
   const key = getActivePeriodKey(store);
   if (!employee.months[key]) {
     employee.months[key] = createEmptyMonthData();

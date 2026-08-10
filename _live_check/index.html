@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Калькулятор ЗП руководителя РТТ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">РТТ</div>
+        <div class="brand-text">
+          <h1>Калькулятор зарплаты</h1>
+          <p>Руководитель РТТ · помесячный расчёт</p>
+        </div>
+      </div>
+      <div class="header-meta" id="headerPeriodLabel"></div>
+    </header>
+
+    <section class="analytics-grid" id="analyticsCards" aria-label="Общая аналитика"></section>
+
+    <section class="panel" id="section-employee">
+      <div class="panel-head">
+        <h2>Сотрудник и период</h2>
+        <p>Данные каждого руководителя и месяца хранятся отдельно</p>
+      </div>
+
+      <div class="employee-layout">
+        <div class="employee-sidebar">
+          <ul class="employee-list" id="employeeList"></ul>
+          <div class="employee-actions">
+            <button type="button" class="btn btn-primary" id="btnAddEmployee">Создать</button>
+            <button type="button" class="btn btn-ghost" id="btnEditEmployee">Изменить</button>
+            <button type="button" class="btn btn-danger" id="btnDeleteEmployee">Удалить</button>
+          </div>
+        </div>
+
+        <div class="employee-main">
+          <div class="form-grid form-grid-3">
+            <label class="field">
+              <span>ФИО руководителя</span>
+              <input type="text" id="employeeName" placeholder="Иванов Иван Иванович" />
+            </label>
+            <label class="field">
+              <span>Месяц</span>
+              <select id="monthSelect"></select>
+            </label>
+            <label class="field">
+              <span>Год</span>
+              <select id="yearSelect"></select>
+            </label>
+          </div>
+          <div class="periods-box">
+            <h3>Сохранённые периоды</h3>
+            <div class="periods-chips" id="periodsChips"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel panel-salons" id="section-salons">
+      <div class="panel-head">
+        <h2>Количество салонов</h2>
+        <p>Название и оператор каждого салона · T2 участвует в операторском блоке</p>
+      </div>
+      <div class="form-grid form-grid-2">
+        <label class="field">
+          <span>Количество салонов в подчинении</span>
+          <input type="number" id="salonsTotal" min="0" step="1" />
+        </label>
+        <div class="field">
+          <span>Подсказка</span>
+          <div class="hint-box" id="salonsHint">После ввода количества появятся карточки салонов</div>
+        </div>
+      </div>
+      <div id="salonsValidation" class="validation-msg" hidden></div>
+      <div class="salon-cards" id="salonCards"></div>
+    </section>
+
+    <section class="panel is-collapsible" id="section-salary" data-panel="salary">
+      <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="section-salary-body" data-panel-toggle="salary">
+        <span class="collapse-icon" aria-hidden="true">▼</span>
+        <span class="panel-toggle-main">
+          <strong>Окладная часть</strong>
+          <small>Только грейд, без учёта часов</small>
+        </span>
+        <span class="panel-toggle-sum" data-panel-sum="salary">0 ₽</span>
+      </button>
+      <div class="panel-body" id="section-salary-body">
+        <div class="grade-grid" id="gradeSelector"></div>
+        <div class="salary-summary" id="salarySummary"></div>
+      </div>
+    </section>
+
+    <section class="panel is-collapsible" id="section-economy" data-panel="economy">
+      <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="section-economy-body" data-panel-toggle="economy">
+        <span class="collapse-icon" aria-hidden="true">▼</span>
+        <span class="panel-toggle-main">
+          <strong>Экономический блок</strong>
+          <small>Кредиты / аттачмент → эффективность</small>
+        </span>
+        <span class="panel-toggle-sum" data-panel-sum="economy">0 ₽</span>
+      </button>
+      <div class="panel-body" id="section-economy-body">
+        <div class="form-grid form-grid-3">
+          <label class="field">
+            <span>Выполнили KPI Комбо 40%+</span>
+            <input type="number" id="salonsComboDone" min="0" step="1" />
+          </label>
+          <label class="field">
+            <span>Выполнение плана по доле кредитов, %</span>
+            <input type="number" id="creditPlanPercent" min="0" step="0.1" />
+          </label>
+          <label class="field">
+            <span>Аттачмент</span>
+            <input type="number" id="attachment" min="0" step="0.01" />
+          </label>
+        </div>
+        <div class="coeff-row" id="coeffRow"></div>
+        <div class="combo-card" id="comboCard"></div>
+        <div class="kpi-list" id="economyKpiList"></div>
+        <div id="economyWhyLosing" class="why-losing"></div>
+        <div class="result-strip" id="economyResultStrip"></div>
+      </div>
+    </section>
+
+    <section class="panel is-collapsible" id="section-admin" data-panel="admin">
+      <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="section-admin-body" data-panel-toggle="admin">
+        <span class="collapse-icon" aria-hidden="true">▼</span>
+        <span class="panel-toggle-main">
+          <strong>Административный блок</strong>
+          <small>Своя логика, без эффективности экономики</small>
+        </span>
+        <span class="panel-toggle-sum" data-panel-sum="admin">0 ₽</span>
+      </button>
+      <div class="panel-body" id="section-admin-body">
+        <div id="adminBlock"></div>
+        <div class="result-strip" id="adminResultStrip"></div>
+      </div>
+    </section>
+
+    <section class="panel is-collapsible" id="section-operator" data-panel="operator">
+      <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="section-operator-body" data-panel-toggle="operator">
+        <span class="collapse-icon" aria-hidden="true">▼</span>
+        <span class="panel-toggle-main">
+          <strong>Операторский блок</strong>
+          <small>Только T2 · бюджет × коэффициент</small>
+        </span>
+        <span class="panel-toggle-sum" data-panel-sum="operator">0 ₽</span>
+      </button>
+      <div class="panel-body" id="section-operator-body">
+        <div id="operatorBlock"></div>
+        <div class="result-strip" id="operatorResultStrip"></div>
+      </div>
+    </section>
+
+    <section class="panel is-collapsible" id="section-blacklist" data-panel="blacklist">
+      <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="section-blacklist-body" data-panel-toggle="blacklist">
+        <span class="collapse-icon" aria-hidden="true">▼</span>
+        <span class="panel-toggle-main">
+          <strong>Чёрный список</strong>
+          <small>Коэффициент только к бонусной части</small>
+        </span>
+        <span class="panel-toggle-sum" data-panel-sum="blacklist">×1,00</span>
+      </button>
+      <div class="panel-body" id="section-blacklist-body">
+        <div id="blackListBlock"></div>
+        <div class="result-strip" id="blackListResultStrip"></div>
+      </div>
+    </section>
+
+    <section class="panel is-collapsible" id="section-sales" data-panel="sales">
+      <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="section-sales-body" data-panel-toggle="sales">
+        <span class="collapse-icon" aria-hidden="true">▼</span>
+        <span class="panel-toggle-main">
+          <strong>Бонус за продажи</strong>
+          <small>Максимум 9 000 ₽ после сезонности</small>
+        </span>
+        <span class="panel-toggle-sum" data-panel-sum="sales">0 ₽</span>
+      </button>
+      <div class="panel-body" id="section-sales-body">
+        <div class="seasonality-bar" id="seasonalityBar"></div>
+        <h3 class="subhead">Продажи</h3>
+        <div class="table-wrap">
+          <table class="data-table" id="salesProductsTable">
+            <thead>
+              <tr>
+                <th>Показатель</th>
+                <th>Ставка</th>
+                <th>Сумма продаж</th>
+                <th>Бонус</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <h3 class="subhead">Операторский блок продаж</h3>
+        <div class="table-wrap">
+          <table class="data-table" id="operatorSalesTable">
+            <thead>
+              <tr>
+                <th>Показатель</th>
+                <th>Ставка</th>
+                <th>Кол-во / Сумма</th>
+                <th>Бонус</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="result-strip" id="salesResultStrip"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="section-losses">
+      <div class="panel-head">
+        <h2>Анализ потерь и возможностей</h2>
+        <p>Где теряются деньги и до какого порога осталось дойти</p>
+      </div>
+      <div id="lossesBlock"></div>
+    </section>
+
+    <section class="panel panel-total" id="section-total">
+      <div class="panel-head">
+        <h2>Итоговая зарплата</h2>
+        <p>Оклад + бонусная часть после чёрного списка</p>
+      </div>
+      <div id="totalBlock"></div>
+    </section>
+
+    <section class="panel" id="section-composition">
+      <div class="panel-head">
+        <h2>Из чего складывается зарплата</h2>
+        <p>Структура итоговой выплаты по блокам</p>
+      </div>
+      <div id="compositionBlock"></div>
+    </section>
+
+    <footer class="app-footer">
+      <span>Данные автоматически сохраняются в LocalStorage</span>
+      <button type="button" class="btn btn-ghost btn-sm" id="btnRunChecks">Проверить формулы</button>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="data.js"></script>
+  <script src="calculator.js"></script>
+  <script src="storage.js"></script>
+  <script src="ui.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

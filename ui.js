@@ -1374,14 +1374,23 @@ function initCollapse() {
 }
 
 function bindEvents() {
-  document.getElementById('employeeList').addEventListener('click', (e) => {
+  const on = (id, event, handler) => {
+    const el = document.getElementById(id);
+    if (!el) {
+      console.warn(`Элемент #${id} не найден, обработчик ${event} пропущен`);
+      return;
+    }
+    el.addEventListener(event, handler);
+  };
+
+  on('employeeList', 'click', (e) => {
     const btn = e.target.closest('[data-employee-id]');
     if (!btn) return;
     setActiveEmployee(UI.store, btn.dataset.employeeId);
     syncAll();
   });
 
-  document.getElementById('periodsChips').addEventListener('click', (e) => {
+  on('periodsChips', 'click', (e) => {
     const chip = e.target.closest('[data-period]');
     if (!chip) return;
     const [year, month] = chip.dataset.period.split('-').map(Number);
@@ -1389,7 +1398,7 @@ function bindEvents() {
     syncAll();
   });
 
-  document.getElementById('btnAddEmployee').addEventListener('click', () => {
+  on('btnAddEmployee', 'click', () => {
     const name = prompt('ФИО нового руководителя:', 'Новый руководитель');
     if (name === null) return;
     addEmployee(UI.store, name);
@@ -1397,7 +1406,7 @@ function bindEvents() {
     syncAll();
   });
 
-  document.getElementById('btnEditEmployee').addEventListener('click', () => {
+  on('btnEditEmployee', 'click', () => {
     const employee = getActiveEmployee(UI.store);
     const name = prompt('Изменить ФИО:', employee.name);
     if (name === null) return;
@@ -1406,7 +1415,7 @@ function bindEvents() {
     syncAll();
   });
 
-  document.getElementById('btnDeleteEmployee').addEventListener('click', () => {
+  on('btnDeleteEmployee', 'click', () => {
     const employee = getActiveEmployee(UI.store);
     if (!confirm(`Удалить сотрудника «${employee.name}» и все его периоды?`)) return;
     const result = deleteEmployee(UI.store, employee.id);
@@ -1418,23 +1427,23 @@ function bindEvents() {
     syncAll();
   });
 
-  document.getElementById('employeeName').addEventListener('change', (e) => {
+  on('employeeName', 'change', (e) => {
     updateEmployeeName(UI.store, UI.store.activeEmployeeId, e.target.value);
     renderEmployeeList();
     recalculate();
   });
 
-  document.getElementById('monthSelect').addEventListener('change', (e) => {
+  on('monthSelect', 'change', (e) => {
     setActivePeriod(UI.store, UI.store.activeYear, Number(e.target.value));
     syncAll();
   });
 
-  document.getElementById('yearSelect').addEventListener('change', (e) => {
+  on('yearSelect', 'change', (e) => {
     setActivePeriod(UI.store, Number(e.target.value), UI.store.activeMonth);
     syncAll();
   });
 
-  document.getElementById('gradeSelector').addEventListener('click', (e) => {
+  on('gradeSelector', 'click', (e) => {
     const card = e.target.closest('[data-grade]');
     if (!card) return;
     updateMonthField(UI.store, (data) => {
@@ -1451,7 +1460,7 @@ function bindEvents() {
   ];
 
   numberFields.forEach(([id, key, integer]) => {
-    document.getElementById(id).addEventListener('input', (e) => {
+    on(id, 'input', (e) => {
       updateMonthField(UI.store, (data) => {
         let value = Number(e.target.value);
         if (!Number.isFinite(value)) value = 0;
@@ -1466,7 +1475,7 @@ function bindEvents() {
     });
   });
 
-  document.getElementById('salonsTotal').addEventListener('change', (e) => {
+  on('salonsTotal', 'change', (e) => {
     let value = Math.max(0, Math.floor(Number(e.target.value) || 0));
     const current = getActiveMonthData(UI.store).salonsTotal;
 
@@ -1485,7 +1494,8 @@ function bindEvents() {
       data.salonsTotal = value;
     });
     const data = getActiveMonthData(UI.store);
-    document.getElementById('salonsComboDone').value = data.salonsComboDone;
+    const comboEl = document.getElementById('salonsComboDone');
+    if (comboEl) comboEl.value = data.salonsComboDone;
     UI.recalculating = true;
     renderSalonCards(data);
     renderAdminBlock(data);
@@ -1495,7 +1505,7 @@ function bindEvents() {
     recalculate();
   });
 
-  document.getElementById('section-salons').addEventListener('input', (e) => {
+  on('section-salons', 'input', (e) => {
     const nameInput = e.target.closest('[data-salon-name]');
     if (nameInput) {
       const index = Number(nameInput.dataset.salonName);
@@ -1512,7 +1522,7 @@ function bindEvents() {
     }
   });
 
-  document.getElementById('section-salons').addEventListener('change', (e) => {
+  on('section-salons', 'change', (e) => {
     const nameInput = e.target.closest('[data-salon-name]');
     if (nameInput) {
       const data = getActiveMonthData(UI.store);
@@ -1541,7 +1551,7 @@ function bindEvents() {
     recalculate();
   });
 
-  document.getElementById('section-blacklist').addEventListener('input', (e) => {
+  on('section-blacklist', 'input', (e) => {
     const field = e.target.closest('[data-bl-salon][data-bl-field]');
     if (!field || field.tagName === 'SELECT') return;
     const index = Number(field.dataset.blSalon);
@@ -1556,7 +1566,7 @@ function bindEvents() {
     recalculate();
   });
 
-  document.getElementById('section-blacklist').addEventListener('change', (e) => {
+  on('section-blacklist', 'change', (e) => {
     if (e.target.id === 'blExtraLimit') {
       updateMonthField(UI.store, (data) => {
         if (!data.blackList) data.blackList = createEmptyMonthBlackList();
@@ -1584,7 +1594,7 @@ function bindEvents() {
     recalculate();
   });
 
-  document.getElementById('section-sales').addEventListener('input', (e) => {
+  on('section-sales', 'input', (e) => {
     const salesInput = e.target.closest('[data-sales-id]');
     if (salesInput) {
       updateMonthField(UI.store, (data) => {
@@ -1603,7 +1613,7 @@ function bindEvents() {
     }
   });
 
-  document.getElementById('economyKpiList').addEventListener('input', (e) => {
+  on('economyKpiList', 'input', (e) => {
     const planInput = e.target.closest('[data-kpi-plan]');
     const factInput = e.target.closest('[data-kpi-fact]');
     if (!planInput && !factInput) return;
@@ -1617,7 +1627,7 @@ function bindEvents() {
     recalculate();
   });
 
-  document.getElementById('section-admin').addEventListener('change', (e) => {
+  on('section-admin', 'change', (e) => {
     const doneSelect = e.target.closest('[data-admin-done]');
     if (doneSelect) {
       const id = doneSelect.dataset.adminDone;
@@ -1672,7 +1682,7 @@ function bindEvents() {
     }
   });
 
-  document.getElementById('section-operator').addEventListener('change', (e) => {
+  on('section-operator', 'change', (e) => {
     const toggle = e.target.closest('[data-tele2-list-index][data-tele2-kpi]');
     if (!toggle) return;
     const listIndex = Number(toggle.dataset.tele2ListIndex);
@@ -1689,7 +1699,7 @@ function bindEvents() {
     recalculate();
   });
 
-  document.getElementById('btnRunChecks').addEventListener('click', () => {
+  on('btnRunChecks', 'click', () => {
     const results = runSelfChecks();
     const failed = results.filter((r) => !r.ok).length;
     showToast(failed ? `Ошибок в проверках: ${failed}` : 'Все тестовые проверки пройдены', Boolean(failed));
@@ -1712,13 +1722,40 @@ function escapeHtml(str) {
 }
 
 function initApp() {
-  UI.store = loadStore();
-  if (!UI.store.uiCollapse) UI.store.uiCollapse = {};
-  ensureActiveMonthData(UI.store);
-  saveStore(UI.store);
+  let bootError = null;
+  try {
+    UI.store = loadStore();
+    if (!UI.store.uiCollapse) UI.store.uiCollapse = {};
+    ensureActiveMonthData(UI.store);
+    saveStore(UI.store);
+  } catch (e) {
+    bootError = e;
+    console.error('Ошибка загрузки данных', e);
+    if (!UI.store) UI.store = createDefaultStore();
+  }
 
-  initPeriodSelects();
-  bindEvents();
-  initCollapse();
-  syncAll();
+  try {
+    initPeriodSelects();
+    bindEvents();
+    initCollapse();
+    syncAll();
+  } catch (e) {
+    bootError = e;
+    console.error('Ошибка запуска интерфейса', e);
+  }
+
+  if (bootError) {
+    const root = document.getElementById('analyticsCards') || document.body;
+    const box = document.createElement('div');
+    box.className = 'validation-msg is-error';
+    box.style.margin = '12px 0';
+    box.textContent =
+      'Часть данных не загрузилась. Нажмите Ctrl+F5. Если кнопки не работают — очистите кэш для ksuivash98.github.io.';
+    root.prepend(box);
+    try {
+      showToast('Ошибка запуска. Попробуйте Ctrl+F5', true);
+    } catch (_) {
+      /* ignore */
+    }
+  }
 }
