@@ -111,6 +111,8 @@ function fillFormFromData(data) {
   renderGradeSelector(data.grade);
   renderSalesTables(data);
   renderEconomyKpiInputs(data);
+  renderAdminBlock(data);
+  renderOperatorBlock(data);
 
   UI.recalculating = false;
 }
@@ -184,50 +186,256 @@ function renderEconomyKpiInputs(data) {
 }
 
 function renderConfigBlocks(result) {
-  renderExtensibleBlock('adminBlock', administrativeRules, result.administrative, 'administrative');
-  renderExtensibleBlock('operatorBlock', operatorRules, result.operator, 'operator');
+  updateAdminBlockResults(result.administrative);
+  updateOperatorBlockResults(result.operator);
   renderBlackListBlock(result.blackList);
 }
 
-function renderExtensibleBlock(rootId, rules, calc, storeKey) {
-  const root = document.getElementById(rootId);
-  if (!rules.length) {
-    root.className = 'empty-config';
-    root.innerHTML = `<p>Правила ещё не заданы. Добавьте KPI в <code>${
-      storeKey === 'administrative' ? 'administrativeRules' : 'operatorRules'
-    }</code> в файле <code>data.js</code>.</p>`;
-    return;
-  }
+function renderAdminBlock(data) {
+  const root = document.getElementById('adminBlock');
+  const admin = data.administrative || createEmptyAdministrativeData();
+  const salonsTotal = data.salonsTotal || 0;
 
-  root.className = 'kpi-list';
-  root.innerHTML = calc.items
-    .map((item) => {
-      const data = getActiveMonthData(UI.store)[storeKey]?.[item.id] || {};
+  const averageCards = administrativeRules
+    .filter((r) => r.type === 'averageBudget')
+    .map((rule) => {
+      const row = admin[rule.id] || { plan: 0, fact: 0 };
       return `
-        <article class="kpi-card">
+        <article class="kpi-card" data-admin-id="${rule.id}">
           <div class="kpi-card-head">
-            <h3>${escapeHtml(item.name)}</h3>
-            <span class="pill ${statusClass(item.bonus)}">${formatMoney(item.bonus)}</span>
+            <h3>${escapeHtml(rule.name)}</h3>
+            <span class="pill is-neutral">Бюджет ${formatMoney(rule.budget)}</span>
           </div>
           <div class="kpi-inputs">
             <label class="field">
               <span>План</span>
-              <input type="number" min="0" step="0.01" data-ext-plan="${storeKey}:${item.id}" value="${Number(data.plan) || 0}" />
+              <input type="number" min="0" step="0.01" data-admin-plan="${rule.id}" value="${row.plan}" />
             </label>
             <label class="field">
               <span>Факт</span>
-              <input type="number" min="0" step="0.01" data-ext-fact="${storeKey}:${item.id}" value="${Number(data.fact) || 0}" />
+              <input type="number" min="0" step="0.01" data-admin-fact="${rule.id}" value="${row.fact}" />
             </label>
           </div>
-          <div class="kpi-metrics">
-            <div class="kpi-metric"><span class="label">Выполнение</span><span class="value">${formatPercent(item.completion)}</span></div>
-            <div class="kpi-metric"><span class="label">Коэффициент</span><span class="value">×${formatCoeff(item.coefficient)}</span></div>
-            <div class="kpi-metric is-brand"><span class="label">Бонус</span><span class="value">${formatMoney(item.bonus)}</span></div>
-            <div class="kpi-metric is-negative"><span class="label">Потеря</span><span class="value">${formatMoney(item.loss)}</span></div>
-          </div>
+          <div class="kpi-metrics" data-admin-metrics="${rule.id}"></div>
         </article>`;
     })
     .join('');
+
+  root.className = 'kpi-list';
+  root.innerHTML = `
+    ${averageCards}
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <h3>Фотоотчет (Т2 &gt;=100%)</h3>
+        <span class="pill is-neutral">+2000 / −1000 за салон</span>
+      </div>
+      <p class="kpi-note">Всего салонов: <strong id="adminSalonsTotalLabel">${salonsTotal}</strong></p>
+      <div class="kpi-inputs">
+        <label class="field">
+          <span>Количество салонов, прошедших KPI</span>
+          <input type="number" min="0" step="1" id="photoReportPassed" value="${admin.photoReportPassed || 0}" />
+        </label>
+        <div class="field">
+          <span>Не прошли (авто)</span>
+          <div class="hint-box" id="photoReportFailedLabel">0</div>
+        </div>
+      </div>
+      <div class="kpi-metrics" data-admin-metrics="photoReport"></div>
+    </article>
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <h3>Выполнение критериев получения Бонуса за сервис</h3>
+        <span class="pill is-neutral">+2000 ₽ / салон</span>
+      </div>
+      <div class="kpi-inputs">
+        <label class="field">
+          <span>Количество выполнивших KPI</span>
+          <input type="number" min="0" step="1" id="servicePassed" value="${admin.servicePassed || 0}" />
+        </label>
+      </div>
+      <div class="kpi-metrics" data-admin-metrics="serviceBonus"></div>
+    </article>
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <h3>Доля проверок ТхВ от WS &gt;=40%</h3>
+        <span class="pill is-neutral">+2000 ₽ / салон</span>
+      </div>
+      <div class="kpi-inputs">
+        <label class="field">
+          <span>Количество салонов, выполнивших KPI</span>
+          <input type="number" min="0" step="1" id="txvPassed" value="${admin.txvPassed || 0}" />
+        </label>
+      </div>
+      <div class="kpi-metrics" data-admin-metrics="txvChecks"></div>
+    </article>`;
+}
+
+function updateAdminBlockResults(adminResult) {
+  const byId = Object.fromEntries((adminResult.items || []).map((i) => [i.id, i]));
+
+  administrativeRules
+    .filter((r) => r.type === 'averageBudget')
+    .forEach((rule) => {
+      const item = byId[rule.id];
+      const el = document.querySelector(`[data-admin-metrics="${rule.id}"]`);
+      if (!el || !item) return;
+      el.innerHTML = `
+        <div class="kpi-metric"><span class="label">Выполнение</span><span class="value">${formatPercent(item.completion)}</span></div>
+        <div class="kpi-metric is-brand"><span class="label">🟢 Бонус</span><span class="value">${formatMoney(item.bonus)}</span></div>
+        <div class="kpi-metric is-positive"><span class="label">Максимум</span><span class="value">${formatMoney(item.maxBonus)}</span></div>
+        <div class="kpi-metric is-negative"><span class="label">🔴 Потеря</span><span class="value">−${formatMoney(item.loss)}</span></div>`;
+    });
+
+  const photo = byId.photoReport;
+  const photoEl = document.querySelector('[data-admin-metrics="photoReport"]');
+  const failedLabel = document.getElementById('photoReportFailedLabel');
+  const salonsLabel = document.getElementById('adminSalonsTotalLabel');
+  if (salonsLabel) salonsLabel.textContent = String(adminResult.salonsTotal || 0);
+  if (failedLabel && photo) failedLabel.textContent = String(photo.failed);
+  if (photoEl && photo) {
+    photoEl.innerHTML = `
+      <div class="kpi-metric is-positive"><span class="label">Прошли</span><span class="value">${photo.passed}</span></div>
+      <div class="kpi-metric is-negative"><span class="label">Не прошли</span><span class="value">${photo.failed}</span></div>
+      <div class="kpi-metric is-brand"><span class="label">🟢 Бонус</span><span class="value">${formatMoney(photo.bonus)}</span></div>
+      <div class="kpi-metric is-warning"><span class="label">Максимум</span><span class="value">${formatMoney(photo.maxBonus)}</span></div>`;
+  }
+
+  ['serviceBonus', 'txvChecks'].forEach((id) => {
+    const item = byId[id];
+    const el = document.querySelector(`[data-admin-metrics="${id}"]`);
+    if (!el || !item) return;
+    el.innerHTML = `
+      <div class="kpi-metric is-positive"><span class="label">Выполнили</span><span class="value">${item.passed}</span></div>
+      <div class="kpi-metric"><span class="label">Не выполнили</span><span class="value">${item.failed}</span></div>
+      <div class="kpi-metric is-brand"><span class="label">🟢 Бонус</span><span class="value">${formatMoney(item.bonus)}</span></div>
+      <div class="kpi-metric is-warning"><span class="label">Максимум</span><span class="value">${formatMoney(item.maxBonus)}</span></div>`;
+  });
+
+  const labels = {
+    recommendations: 'Бонус за рекомендации',
+    cardShare: 'Бонус за долю продаж по карте',
+    dovChecklist: 'Бонус за чек-лист ДОВ',
+    monthlyTesting: 'Бонус за тестирование',
+    photoReport: 'Бонус за фотоотчет',
+    serviceBonus: 'Бонус за сервис',
+    txvChecks: 'Бонус за ТхВ',
+  };
+
+  document.getElementById('adminResultStrip').innerHTML = `
+    ${administrativeRules
+      .map((rule) => {
+        const item = byId[rule.id];
+        return `<div class="result-item">
+          <span class="label">${labels[rule.id] || rule.name}</span>
+          <div class="value">${formatMoney(item?.bonus || 0)}</div>
+        </div>`;
+      })
+      .join('')}
+    <div class="result-item is-brand" style="flex:1 1 100%">
+      <span class="label">ИТОГО АДМИНИСТРАТИВНЫЙ БОНУС</span>
+      <div class="value">${formatMoney(adminResult.bonus)}</div>
+    </div>`;
+}
+
+function renderOperatorBlock(data) {
+  const root = document.getElementById('operatorBlock');
+  const operator = data.operator || createEmptyOperatorData();
+  const salonsTotal = data.salonsTotal || 0;
+
+  const salonCards = (operator.salons || [])
+    .map((salon, index) => {
+      const toggles = operatorTele2Kpis
+        .map((kpi) => {
+          const checked = Boolean(salon.kpis?.[kpi.id]);
+          return `
+            <label class="kpi-toggle ${checked ? 'is-done' : 'is-fail'}">
+              <input type="checkbox" data-tele2-salon="${index}" data-tele2-kpi="${kpi.id}" ${checked ? 'checked' : ''} />
+              <span>${escapeHtml(kpi.name)}</span>
+            </label>`;
+        })
+        .join('');
+      return `
+        <article class="kpi-card tele2-salon-card">
+          <div class="kpi-card-head">
+            <h3>Салон Tele2 №${index + 1}</h3>
+          </div>
+          <div class="tele2-toggles">${toggles}</div>
+        </article>`;
+    })
+    .join('');
+
+  root.innerHTML = `
+    <div class="form-grid form-grid-2" style="margin-bottom:14px">
+      <label class="field">
+        <span>Количество салонов Tele2</span>
+        <input type="number" id="tele2Salons" min="0" step="1" value="${operator.tele2Salons || 0}" />
+      </label>
+      <div class="field">
+        <span>Салонов в подчинении</span>
+        <div class="hint-box">${salonsTotal}</div>
+      </div>
+    </div>
+    <div id="tele2Validation" class="validation-msg" hidden></div>
+    <div class="kpi-list" id="tele2SalonCards">${salonCards || '<p class="kpi-note">Укажите количество салонов Tele2</p>'}</div>
+    <div id="operatorFailedKpis" class="failed-kpis"></div>`;
+}
+
+function updateOperatorBlockResults(op) {
+  const validation = document.getElementById('tele2Validation');
+  const salonsValidation = document.getElementById('salonsValidation');
+
+  if (salonsValidation) {
+    if ((op.salonsTotal || 0) <= 0) {
+      salonsValidation.hidden = false;
+      salonsValidation.textContent = 'Укажите количество салонов в подчинении больше 0 для корректного расчёта.';
+      salonsValidation.className = 'validation-msg is-warning';
+    } else {
+      salonsValidation.hidden = true;
+    }
+  }
+
+  if (validation) {
+    if (op.invalidTele2) {
+      validation.hidden = false;
+      validation.className = 'validation-msg is-error';
+      validation.textContent = 'Ошибка: количество салонов Tele2 не может быть больше общего количества салонов. Расчёт остановлен.';
+    } else if (!op.budgetDefined && op.salonsTotal > 0) {
+      validation.hidden = false;
+      validation.className = 'validation-msg is-warning';
+      validation.textContent = `Бюджет для ${op.salonsTotal} салонов не задан. Добавьте значение в operatorBudgetBySalons.`;
+    } else {
+      validation.hidden = true;
+    }
+  }
+
+  const failedRoot = document.getElementById('operatorFailedKpis');
+  if (failedRoot) {
+    if (!op.failedBySalon?.length) {
+      failedRoot.innerHTML = `<div class="why-row is-ok"><div class="why-body"><div class="why-title">🟢 Невыполненных KPI нет</div></div></div>`;
+    } else {
+      failedRoot.innerHTML = `
+        <h3 class="subhead">Не выполненные KPI</h3>
+        ${op.failedBySalon
+          .map(
+            (salon) => `
+          <div class="failed-salon">
+            <div class="why-title">🔴 ${escapeHtml(salon.name)}</div>
+            <ul>${salon.failed.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>
+          </div>`
+          )
+          .join('')}`;
+    }
+  }
+
+  document.getElementById('operatorResultStrip').innerHTML = `
+    <div class="result-item"><span class="label">Бюджет</span><div class="value">${formatMoney(op.budget)}</div></div>
+    <div class="result-item"><span class="label">Всего KPI</span><div class="value">${op.totalKpis}</div></div>
+    <div class="result-item is-positive"><span class="label">Выполнено</span><div class="value">${op.doneKpis}</div></div>
+    <div class="result-item is-negative"><span class="label">Не выполнено</span><div class="value">${op.failedKpis}</div></div>
+    <div class="result-item"><span class="label">Выполнение</span><div class="value">${formatPercent(op.completion, 2)}</div></div>
+    <div class="result-item"><span class="label">Коэффициент</span><div class="value">×${formatCoeff(op.coefficient)}</div></div>
+    <div class="result-item is-brand"><span class="label">🟢 Текущий бонус</span><div class="value">${formatMoney(op.bonus)}</div></div>
+    <div class="result-item is-negative"><span class="label">🔴 Потеря к бюджету</span><div class="value">−${formatMoney(op.loss)}</div></div>`;
 }
 
 function renderBlackListBlock(calc) {
@@ -724,7 +932,7 @@ function renderLosses(result) {
       rows.push({
         title: item.name,
         completion: item.completion,
-        efficiency: item.coefficient,
+        efficiency: null,
         current: item.bonus,
         next: null,
         needed: null,
@@ -735,19 +943,19 @@ function renderLosses(result) {
     });
   }
 
-  if (result.operator.items.length) {
-    result.operator.items.forEach((item) => {
-      rows.push({
-        title: item.name,
-        completion: item.completion,
-        efficiency: item.coefficient,
-        current: item.bonus,
-        next: null,
-        needed: null,
-        max: item.maxBonus,
-        plus: item.potentialPlus,
-        reason: '',
-      });
+  if (result.operator) {
+    rows.push({
+      title: 'Операторский блок (Tele2)',
+      completion: result.operator.completion,
+      efficiency: result.operator.coefficient,
+      current: result.operator.bonus,
+      next: null,
+      needed: null,
+      max: result.operator.maxBonus,
+      plus: result.operator.potentialPlus,
+      reason: result.operator.invalidTele2
+        ? 'Tele2 больше общего числа салонов'
+        : `${result.operator.doneKpis}/${result.operator.totalKpis} KPI`,
     });
   }
 
@@ -807,10 +1015,6 @@ function renderTotal(result) {
         <span class="value">${formatMoney(result.fixedSalary)}</span>
       </div>
       <div class="total-row is-positive">
-        <span class="label">Бонус за продажи</span>
-        <span class="value">${formatMoney(result.sales.total)}</span>
-      </div>
-      <div class="total-row is-positive">
         <span class="label">Бонус экономического блока</span>
         <span class="value">${formatMoney(result.economy.bonus)}</span>
       </div>
@@ -822,18 +1026,33 @@ function renderTotal(result) {
         <span class="label">Бонус операторского блока</span>
         <span class="value">${formatMoney(result.operator.bonus)}</span>
       </div>
+      <div class="total-row is-positive">
+        <span class="label">Бонус за продажи</span>
+        <span class="value">${formatMoney(result.sales.total)}</span>
+      </div>
       <div class="total-row is-negative">
-        <span class="label">Штрафы чёрного списка</span>
-        <span class="value">−${formatMoney(result.totalPenalties)}</span>
+        <span class="label">Чёрный список</span>
+        <span class="value">${result.totalPenalties > 0 ? '−' : ''}${formatMoney(result.totalPenalties)}</span>
       </div>
       <div class="total-row">
         <span class="label">Общий бонус</span>
         <span class="value">${formatMoney(result.totalBonus)}</span>
       </div>
       <div class="total-row grand">
-        <span class="label">ИТОГО К ВЫПЛАТЕ</span>
+        <span class="label">ИТОГОВАЯ ЗАРПЛАТА</span>
         <span class="value">${formatMoney(result.totalPay)}</span>
       </div>
+    </div>`;
+
+  document.getElementById('compositionBlock').innerHTML = `
+    <div class="total-grid">
+      <div class="total-row"><span class="label">Оклад</span><span class="value">${formatMoney(result.fixedSalary)}</span></div>
+      <div class="total-row is-positive"><span class="label">Экономический блок</span><span class="value">${formatMoney(result.economy.bonus)}</span></div>
+      <div class="total-row is-positive"><span class="label">Административный блок</span><span class="value">${formatMoney(result.administrative.bonus)}</span></div>
+      <div class="total-row is-positive"><span class="label">Операторский блок</span><span class="value">${formatMoney(result.operator.bonus)}</span></div>
+      <div class="total-row is-positive"><span class="label">Продажи</span><span class="value">${formatMoney(result.sales.total)}</span></div>
+      <div class="total-row is-negative"><span class="label">Чёрный список</span><span class="value">${result.totalPenalties > 0 ? '−' : ''}${formatMoney(result.totalPenalties)}</span></div>
+      <div class="total-row grand"><span class="label">ИТОГО</span><span class="value">${formatMoney(result.totalPay)}</span></div>
     </div>`;
 }
 
@@ -950,6 +1169,16 @@ function bindEvents() {
           e.target.value = data.salonsComboDone;
         }
       });
+
+      if (key === 'salonsTotal') {
+        const data = getActiveMonthData(UI.store);
+        document.getElementById('salonsComboDone').value = data.salonsComboDone;
+        // Пересобрать формы, зависящие от числа салонов
+        UI.recalculating = true;
+        renderAdminBlock(data);
+        renderOperatorBlock(data);
+        UI.recalculating = false;
+      }
       recalculate();
     });
   });
@@ -987,17 +1216,71 @@ function bindEvents() {
     recalculate();
   });
 
-  document.body.addEventListener('input', (e) => {
-    const plan = e.target.closest('[data-ext-plan]');
-    const fact = e.target.closest('[data-ext-fact]');
+  document.getElementById('section-admin').addEventListener('input', (e) => {
+    const plan = e.target.closest('[data-admin-plan]');
+    const fact = e.target.closest('[data-admin-fact]');
     if (plan || fact) {
-      const raw = (plan || fact).dataset[plan ? 'extPlan' : 'extFact'];
-      const [storeKey, id] = raw.split(':');
+      const id = plan?.dataset.adminPlan || fact?.dataset.adminFact;
       updateMonthField(UI.store, (data) => {
-        if (!data[storeKey][id]) data[storeKey][id] = { plan: 0, fact: 0 };
-        if (plan) data[storeKey][id].plan = Number(plan.value) || 0;
-        if (fact) data[storeKey][id].fact = Number(fact.value) || 0;
+        if (!data.administrative[id]) data.administrative[id] = { plan: 0, fact: 0 };
+        if (plan) data.administrative[id].plan = Number(plan.value) || 0;
+        if (fact) data.administrative[id].fact = Number(fact.value) || 0;
       });
+      recalculate();
+      return;
+    }
+
+    if (e.target.id === 'photoReportPassed' || e.target.id === 'servicePassed' || e.target.id === 'txvPassed') {
+      const map = {
+        photoReportPassed: 'photoReportPassed',
+        servicePassed: 'servicePassed',
+        txvPassed: 'txvPassed',
+      };
+      updateMonthField(UI.store, (data) => {
+        let value = Math.max(0, Math.floor(Number(e.target.value) || 0));
+        if (value > data.salonsTotal) {
+          value = data.salonsTotal;
+          e.target.value = value;
+          showToast('Нельзя указать больше салонов, чем в подчинении', true);
+        }
+        data.administrative[map[e.target.id]] = value;
+      });
+      recalculate();
+    }
+  });
+
+  document.getElementById('section-operator').addEventListener('input', (e) => {
+    if (e.target.id === 'tele2Salons') {
+      updateMonthField(UI.store, (data) => {
+        let value = Math.max(0, Math.floor(Number(e.target.value) || 0));
+        if (value > data.salonsTotal) {
+          showToast('Tele2 не может быть больше общего числа салонов', true);
+        }
+        data.operator.tele2Salons = value;
+      });
+      const data = getActiveMonthData(UI.store);
+      document.getElementById('tele2Salons').value = data.operator.tele2Salons;
+      UI.recalculating = true;
+      renderOperatorBlock(data);
+      UI.recalculating = false;
+      recalculate();
+      return;
+    }
+
+    const toggle = e.target.closest('[data-tele2-salon][data-tele2-kpi]');
+    if (toggle) {
+      const salonIndex = Number(toggle.dataset.tele2Salon);
+      const kpiId = toggle.dataset.tele2Kpi;
+      updateMonthField(UI.store, (data) => {
+        if (!data.operator.salons[salonIndex]) return;
+        data.operator.salons[salonIndex].kpis[kpiId] = toggle.checked;
+      });
+      // Обновить цвет toggle без полной перерисовки
+      const label = toggle.closest('.kpi-toggle');
+      if (label) {
+        label.classList.toggle('is-done', toggle.checked);
+        label.classList.toggle('is-fail', !toggle.checked);
+      }
       recalculate();
     }
   });

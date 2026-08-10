@@ -188,15 +188,82 @@ const EFFICIENCY_THRESHOLDS = [
 ];
 
 /**
- * Пустая конфигурация административного блока.
- * В дальнейшем добавить: KPI, план, факт, выполнение, коэффициент, бонус, потери, плюс.
+ * Административный блок.
+ * НЕ использует эффективность / кредиты / аттачмент / сезонность экономики.
+ *
+ * type: 'averageBudget' — бонус = бюджет × min(1, факт/план)
+ * type: 'photoReport' — (прошли×2000) − (не прошли×1000)
+ * type: 'perSalonBonus' — выполнившие × ставка (без штрафа)
  */
-const administrativeRules = [];
+const administrativeRules = [
+  {
+    id: 'recommendations',
+    name: 'Выполнение плана по рекомендациям (дошедшие на ПД)',
+    type: 'averageBudget',
+    budget: 3000,
+  },
+  {
+    id: 'cardShare',
+    name: 'Доля продаж по карте <= 25%',
+    type: 'averageBudget',
+    budget: 1000,
+  },
+  {
+    id: 'dovChecklist',
+    name: 'Чек-лист ДОВ',
+    type: 'averageBudget',
+    budget: 2000,
+  },
+  {
+    id: 'monthlyTesting',
+    name: 'Ежемесячное тестирование',
+    type: 'averageBudget',
+    budget: 1000,
+  },
+  {
+    id: 'photoReport',
+    name: 'Фотоотчет (Т2 >=100%)',
+    type: 'photoReport',
+    passBonus: 2000,
+    failPenalty: 1000,
+  },
+  {
+    id: 'serviceBonus',
+    name: 'Выполнение критериев получения Бонуса за сервис',
+    type: 'perSalonBonus',
+    perSalon: 2000,
+  },
+  {
+    id: 'txvChecks',
+    name: 'Доля проверок ТхВ от WS >=40%',
+    type: 'perSalonBonus',
+    perSalon: 2000,
+  },
+];
 
 /**
- * Пустая конфигурация операторского блока (KPI руководителя, не продажи).
- * В дальнейшем добавить: KPI, план, факт, выполнение, коэффициент, бонус, потери, плюс.
+ * KPI Tele2 для операторского блока (только TELE2).
+ * Каждый KPI имеет вес 1.
  */
+const operatorTele2Kpis = [
+  { id: 'csSubscriptions', name: 'ЦС, руб × Подписки', weight: 1 },
+  { id: 'shpdT2', name: 'ШПД Т2 (ДИТ и РТК), шт', weight: 1 },
+  { id: 'znAbonFtp', name: 'ЗН и Абон-ты × ФТП', weight: 1 },
+  { id: 'mnp', name: 'MNP', weight: 1 },
+  { id: 'controlPlanTt', name: 'Контр план ТТ (ВН)', weight: 1 },
+];
+
+/**
+ * Бюджет операторского блока по количеству салонов в подчинении.
+ * Легко расширяется: добавьте ключ для нужного количества салонов.
+ */
+const operatorBudgetBySalons = {
+  1: 15000,
+  2: 18000,
+  3: 21000,
+};
+
+/** Совместимость: operatorRules больше не используется как список KPI. */
 const operatorRules = [];
 
 /**
@@ -207,6 +274,35 @@ const blackListRules = [];
 
 /** Ключ LocalStorage. */
 const STORAGE_KEY = 'rtt_manager_salary_calculator_v1';
+
+function createEmptyTele2SalonKpis() {
+  const kpis = {};
+  operatorTele2Kpis.forEach((kpi) => {
+    kpis[kpi.id] = false;
+  });
+  return kpis;
+}
+
+function createEmptyAdministrativeData() {
+  const data = {
+    photoReportPassed: 0,
+    servicePassed: 0,
+    txvPassed: 0,
+  };
+  administrativeRules.forEach((rule) => {
+    if (rule.type === 'averageBudget') {
+      data[rule.id] = { plan: 0, fact: 0 };
+    }
+  });
+  return data;
+}
+
+function createEmptyOperatorData() {
+  return {
+    tele2Salons: 0,
+    salons: [],
+  };
+}
 
 /**
  * Шаблон данных расчёта за месяц.
@@ -236,8 +332,8 @@ function createEmptyMonthData() {
     creditPlanPercent: 100,
     attachment: 2.3,
     economy,
-    administrative: {},
-    operator: {},
+    administrative: createEmptyAdministrativeData(),
+    operator: createEmptyOperatorData(),
     blackList: {},
   };
 }

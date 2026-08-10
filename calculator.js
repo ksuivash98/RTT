@@ -814,108 +814,223 @@ function calculateSalesBonus(monthData, month) {
 }
 
 /**
- * Административный блок — по пустой конфигурации administrativeRules.
+ * Административный блок.
+ * Собственная логика — без эффективности / кредитов / аттачмента / сезонности.
  */
 function calculateAdministrativeBonus(monthData) {
-  if (!administrativeRules.length) {
-    return {
-      items: [],
-      bonus: 0,
-      maxBonus: 0,
-      loss: 0,
-      potentialPlus: 0,
-    };
-  }
+  const salonsTotal = Math.max(0, Math.floor(Number(monthData.salonsTotal) || 0));
+  const admin = monthData.administrative || createEmptyAdministrativeData();
+  const items = [];
 
-  const items = administrativeRules.map((rule) => {
-    const data = monthData.administrative?.[rule.id] || {};
-    const plan = Number(data.plan) || 0;
-    const fact = Number(data.fact) || 0;
-    const completion = calcCompletionPercent(plan, fact);
-    const coefficient = typeof rule.getCoefficient === 'function'
-      ? rule.getCoefficient(completion, data)
-      : 1;
-    const base = Number(rule.baseBonus) || 0;
-    const bonus = roundMoney(base * coefficient);
-    const maxBonus = roundMoney(Number(rule.maxBonus) || base);
-    const loss = roundMoney(Math.max(0, maxBonus - bonus));
+  administrativeRules.forEach((rule) => {
+    if (rule.type === 'averageBudget') {
+      const plan = Number(admin[rule.id]?.plan) || 0;
+      const fact = Number(admin[rule.id]?.fact) || 0;
+      const completion = calcCompletionPercent(plan, fact);
+      // Пропорция к бюджету без шкалы эффективности экономики, потолок = бюджет
+      const ratio = plan > 0 ? Math.min(1, fact / plan) : 0;
+      const bonus = roundMoney(rule.budget * ratio);
+      const maxBonus = rule.budget;
+      const loss = calculateLoss(bonus, maxBonus);
 
-    return {
-      id: rule.id,
-      name: rule.name,
-      plan,
-      fact,
-      completion,
-      coefficient,
-      bonus,
-      maxBonus,
-      loss,
-      potentialPlus: loss,
-    };
+      items.push({
+        id: rule.id,
+        name: rule.name,
+        type: rule.type,
+        plan,
+        fact,
+        completion,
+        passed: null,
+        failed: null,
+        bonus,
+        maxBonus,
+        loss,
+        potentialPlus: loss,
+      });
+      return;
+    }
+
+    if (rule.type === 'photoReport') {
+      let passed = Math.max(0, Math.floor(Number(admin.photoReportPassed) || 0));
+      if (passed > salonsTotal) passed = salonsTotal;
+      const failed = Math.max(0, salonsTotal - passed);
+      const bonus = roundMoney(passed * rule.passBonus - failed * rule.failPenalty);
+      const maxBonus = roundMoney(salonsTotal * rule.passBonus);
+      const loss = calculateLoss(bonus, maxBonus);
+
+      items.push({
+        id: rule.id,
+        name: rule.name,
+        type: rule.type,
+        plan: null,
+        fact: null,
+        completion: salonsTotal > 0 ? (passed / salonsTotal) * 100 : 0,
+        passed,
+        failed,
+        salonsTotal,
+        bonus,
+        maxBonus,
+        loss,
+        potentialPlus: loss,
+      });
+      return;
+    }
+
+    if (rule.type === 'perSalonBonus') {
+      const field =
+        rule.id === 'serviceBonus'
+          ? 'servicePassed'
+          : rule.id === 'txvChecks'
+            ? 'txvPassed'
+            : null;
+      let passed = field ? Math.max(0, Math.floor(Number(admin[field]) || 0)) : 0;
+      if (passed > salonsTotal) passed = salonsTotal;
+      const failed = Math.max(0, salonsTotal - passed);
+      const bonus = roundMoney(passed * rule.perSalon);
+      const maxBonus = roundMoney(salonsTotal * rule.perSalon);
+      const loss = calculateLoss(bonus, maxBonus);
+
+      items.push({
+        id: rule.id,
+        name: rule.name,
+        type: rule.type,
+        plan: null,
+        fact: null,
+        completion: salonsTotal > 0 ? (passed / salonsTotal) * 100 : 0,
+        passed,
+        failed,
+        salonsTotal,
+        bonus,
+        maxBonus,
+        loss,
+        potentialPlus: loss,
+      });
+    }
   });
+
+  const bonus = roundMoney(items.reduce((s, i) => s + i.bonus, 0));
+  const maxBonus = roundMoney(items.reduce((s, i) => s + i.maxBonus, 0));
+  const loss = roundMoney(items.reduce((s, i) => s + i.loss, 0));
 
   return {
     items,
-    bonus: roundMoney(items.reduce((s, i) => s + i.bonus, 0)),
-    maxBonus: roundMoney(items.reduce((s, i) => s + i.maxBonus, 0)),
-    loss: roundMoney(items.reduce((s, i) => s + i.loss, 0)),
-    potentialPlus: roundMoney(items.reduce((s, i) => s + i.potentialPlus, 0)),
+    salonsTotal,
+    bonus,
+    maxBonus,
+    loss,
+    potentialPlus: loss,
+    breakdown: Object.fromEntries(items.map((i) => [i.id, i.bonus])),
   };
 }
 
 /**
- * Операторский блок KPI — по пустой конфигурации operatorRules.
+ * Бюджет операторского блока по числу салонов в подчинении.
+ * Если значения нет в таблице — бюджет недоступен (нужно расширить operatorBudgetBySalons).
+ */
+function getOperatorBudget(salonsTotal) {
+  const n = Math.max(0, Math.floor(Number(salonsTotal) || 0));
+  if (Object.prototype.hasOwnProperty.call(operatorBudgetBySalons, n)) {
+    return {
+      budget: operatorBudgetBySalons[n],
+      defined: true,
+      salonsTotal: n,
+    };
+  }
+  return {
+    budget: 0,
+    defined: false,
+    salonsTotal: n,
+  };
+}
+
+/**
+ * Ступенчатый коэффициент операторского блока (без интерполяции).
+ * 100%+ / 90–99,9% → 1,0
+ * 85–89,9% → 0,75 (слайд 85% и сценарий 86,67%)
+ * 80–84,9% → 0,8
+ * 70–79,9% → 0,75
+ * 60–69,9% → 0,5
+ * 40–59,9% → 0,2
+ * 0–39,9% → 0
+ */
+function getOperatorCoefficient(percent) {
+  const p = Number(percent);
+  if (!Number.isFinite(p) || p < 40) return 0;
+  if (p < 60) return 0.2;
+  if (p < 70) return 0.5;
+  if (p < 80) return 0.75;
+  if (p < 85) return 0.8;
+  if (p < 90) return 0.75;
+  if (p < 100) return 1.0;
+  return 1.0;
+}
+
+/**
+ * Операторский блок — только TELE2.
+ * Бонус = бюджет(по числу салонов) × коэффициент выполнения KPI.
  */
 function calculateOperatorBonus(monthData) {
-  if (!operatorRules.length) {
-    return {
-      items: [],
-      bonus: 0,
-      maxBonus: 0,
-      loss: 0,
-      potentialPlus: 0,
-    };
-  }
+  const salonsTotal = Math.max(0, Math.floor(Number(monthData.salonsTotal) || 0));
+  const operator = mergeOperatorData(monthData.operator, salonsTotal);
+  const tele2Salons = operator.tele2Salons;
+  const invalidTele2 = tele2Salons > salonsTotal;
 
-  const items = operatorRules.map((rule) => {
-    const data = monthData.operator?.[rule.id] || {};
-    const plan = Number(data.plan) || 0;
-    const fact = Number(data.fact) || 0;
-    const completion = calcCompletionPercent(plan, fact);
-    const coefficient = typeof rule.getCoefficient === 'function'
-      ? rule.getCoefficient(completion, data)
-      : 1;
-    const base = Number(rule.baseBonus) || 0;
-    const bonus = roundMoney(base * coefficient);
-    const maxBonus = roundMoney(Number(rule.maxBonus) || base);
-    const loss = roundMoney(Math.max(0, maxBonus - bonus));
+  const kpisPerSalon = operatorTele2Kpis.length;
+  const totalKpis = tele2Salons * kpisPerSalon;
 
+  let doneKpis = 0;
+  const salonResults = operator.salons.map((salon, index) => {
+    const failed = [];
+    let done = 0;
+    operatorTele2Kpis.forEach((kpi) => {
+      const ok = Boolean(salon.kpis?.[kpi.id]);
+      if (ok) done += 1;
+      else failed.push({ id: kpi.id, name: kpi.name });
+    });
+    doneKpis += done;
     return {
-      id: rule.id,
-      name: rule.name,
-      plan,
-      fact,
-      completion,
-      coefficient,
-      bonus,
-      maxBonus,
-      loss,
-      potentialPlus: loss,
+      index: index + 1,
+      name: `Салон Tele2 №${index + 1}`,
+      done,
+      total: kpisPerSalon,
+      failed,
+      kpis: { ...salon.kpis },
     };
   });
 
+  const failedKpis = totalKpis - doneKpis;
+  const completion = totalKpis > 0 ? (doneKpis / totalKpis) * 100 : 0;
+  const coefficient = invalidTele2 ? 0 : getOperatorCoefficient(completion);
+  const budgetInfo = getOperatorBudget(salonsTotal);
+  const budget = budgetInfo.budget;
+  const bonus =
+    invalidTele2 || !budgetInfo.defined ? 0 : roundMoney(budget * coefficient);
+  const maxBonus = budgetInfo.defined ? budget : 0;
+  const loss = calculateLoss(bonus, maxBonus);
+
   return {
-    items,
-    bonus: roundMoney(items.reduce((s, i) => s + i.bonus, 0)),
-    maxBonus: roundMoney(items.reduce((s, i) => s + i.maxBonus, 0)),
-    loss: roundMoney(items.reduce((s, i) => s + i.loss, 0)),
-    potentialPlus: roundMoney(items.reduce((s, i) => s + i.potentialPlus, 0)),
+    items: [],
+    salonsTotal,
+    tele2Salons,
+    invalidTele2,
+    budget,
+    budgetDefined: budgetInfo.defined,
+    kpisPerSalon,
+    totalKpis,
+    doneKpis,
+    failedKpis,
+    completion,
+    coefficient,
+    salonResults,
+    failedBySalon: salonResults.filter((s) => s.failed.length > 0),
+    bonus,
+    maxBonus,
+    loss,
+    potentialPlus: loss,
   };
 }
 
-/**
- * Чёрный список — по пустой конфигурации blackListRules.
- */
+
 function calculateBlackListPenalties(monthData) {
   if (!blackListRules.length) {
     return {
@@ -1150,6 +1265,91 @@ function runSelfChecks() {
     removed.every((id) => !salesProducts.some((p) => p.id === id)) ? 1 : 0,
     1
   );
+
+  // Операторский коэффициент
+  check('Опер. коэфф. 100%', getOperatorCoefficient(100), 1.0);
+  check('Опер. коэфф. 90%', getOperatorCoefficient(90), 1.0);
+  check('Опер. коэфф. 86.67%', getOperatorCoefficient(86.67), 0.75);
+  check('Опер. коэфф. 80%', getOperatorCoefficient(80), 0.8);
+  check('Опер. коэфф. 60%', getOperatorCoefficient(60), 0.5);
+  check('Опер. коэфф. 40%', getOperatorCoefficient(40), 0.2);
+  check('Опер. коэфф. 0%', getOperatorCoefficient(0), 0);
+
+  // Сценарий оператора: 3 салона, 3 Tele2, 13/15 → 86.67% → ×0.75 → 15750
+  const opMonth = createEmptyMonthData();
+  opMonth.salonsTotal = 3;
+  opMonth.operator.tele2Salons = 3;
+  opMonth.operator = mergeOperatorData({ tele2Salons: 3, salons: [] }, 3);
+  // Отметим 13 KPI: все кроме 2
+  let marked = 0;
+  opMonth.operator.salons.forEach((salon) => {
+    operatorTele2Kpis.forEach((kpi) => {
+      if (marked < 13) {
+        salon.kpis[kpi.id] = true;
+        marked += 1;
+      }
+    });
+  });
+  const opResult = calculateOperatorBonus(opMonth);
+  check('Опер. всего KPI', opResult.totalKpis, 15);
+  check('Опер. выполнено', opResult.doneKpis, 13);
+  check('Опер. %', Math.round(opResult.completion * 100) / 100, 86.67);
+  check('Опер. коэфф. сценарий', opResult.coefficient, 0.75);
+  check('Опер. бонус сценарий', opResult.bonus, 15750);
+
+  // Сценарий 1: 1 салон, 5/5
+  const op1 = createEmptyMonthData();
+  op1.salonsTotal = 1;
+  op1.operator = mergeOperatorData({ tele2Salons: 1, salons: [] }, 1);
+  op1.operator.salons[0].kpis = Object.fromEntries(operatorTele2Kpis.map((k) => [k.id, true]));
+  const r1 = calculateOperatorBonus(op1);
+  check('Сценарий1 %', r1.completion, 100);
+  check('Сценарий1 коэфф', r1.coefficient, 1);
+  check('Сценарий1 бонус', r1.bonus, 15000);
+
+  // Сценарий 2: 2 салона, 8/10 → 80% → 0.8 → 14400
+  const op2 = createEmptyMonthData();
+  op2.salonsTotal = 2;
+  op2.operator = mergeOperatorData({ tele2Salons: 2, salons: [] }, 2);
+  let m2 = 0;
+  op2.operator.salons.forEach((salon) => {
+    operatorTele2Kpis.forEach((kpi) => {
+      salon.kpis[kpi.id] = m2 < 8;
+      m2 += 1;
+    });
+  });
+  const r2 = calculateOperatorBonus(op2);
+  check('Сценарий2 %', r2.completion, 80);
+  check('Сценарий2 коэфф', r2.coefficient, 0.8);
+  check('Сценарий2 бонус', r2.bonus, 14400);
+
+  // Сценарий 5: 3 салона, 2 Tele2, 6/10 → 60% → 0.5 → 10500
+  const op5 = createEmptyMonthData();
+  op5.salonsTotal = 3;
+  op5.operator = mergeOperatorData({ tele2Salons: 2, salons: [] }, 3);
+  let m5 = 0;
+  op5.operator.salons.forEach((salon) => {
+    operatorTele2Kpis.forEach((kpi) => {
+      salon.kpis[kpi.id] = m5 < 6;
+      m5 += 1;
+    });
+  });
+  const r5 = calculateOperatorBonus(op5);
+  check('Сценарий5 KPI', r5.totalKpis, 10);
+  check('Сценарий5 %', r5.completion, 60);
+  check('Сценарий5 коэфф', r5.coefficient, 0.5);
+  check('Сценарий5 бонус', r5.bonus, 10500);
+
+  // Фотоотчёт: 10 салонов, 8 прошли → 14000
+  const adm = createEmptyMonthData();
+  adm.salonsTotal = 10;
+  adm.administrative.photoReportPassed = 8;
+  const admRes = calculateAdministrativeBonus(adm);
+  const photo = admRes.items.find((i) => i.id === 'photoReport');
+  check('Фотоотчёт бонус', photo.bonus, 14000);
+
+  // Админ не зависит от эффективности экономики
+  check('Админ независим', admRes.bonus >= 14000 ? 1 : 0, 1);
 
   const failed = results.filter((r) => !r.ok);
   console.group('RTT Calculator self-checks');

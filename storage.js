@@ -66,6 +66,10 @@ function mergeMonthData(data) {
   const base = createEmptyMonthData();
   if (!data || typeof data !== 'object') return base;
 
+  const salonsTotal = Math.max(0, Math.floor(Number(data.salonsTotal) || 0));
+  let salonsComboDone = Math.max(0, Math.floor(Number(data.salonsComboDone) || 0));
+  if (salonsComboDone > salonsTotal) salonsComboDone = salonsTotal;
+
   return {
     grade: data.grade && managerGrades[data.grade] ? data.grade : base.grade,
     salesValues: { ...base.salesValues, ...(data.salesValues || {}) },
@@ -73,8 +77,8 @@ function mergeMonthData(data) {
       ...base.operatorSalesValues,
       ...(data.operatorSalesValues || {}),
     },
-    salonsTotal: Number(data.salonsTotal) || 0,
-    salonsComboDone: Number(data.salonsComboDone) || 0,
+    salonsTotal,
+    salonsComboDone,
     creditPlanPercent:
       data.creditPlanPercent === undefined || data.creditPlanPercent === null
         ? base.creditPlanPercent
@@ -94,10 +98,55 @@ function mergeMonthData(data) {
         ])
       ),
     },
-    administrative: { ...(data.administrative || {}) },
-    operator: { ...(data.operator || {}) },
+    administrative: mergeAdministrativeData(data.administrative, salonsTotal),
+    operator: mergeOperatorData(data.operator, salonsTotal),
     blackList: { ...(data.blackList || {}) },
   };
+}
+
+function mergeAdministrativeData(raw, salonsTotal) {
+  const base = createEmptyAdministrativeData();
+  const src = raw && typeof raw === 'object' ? raw : {};
+
+  administrativeRules.forEach((rule) => {
+    if (rule.type === 'averageBudget') {
+      base[rule.id] = {
+        plan: Number(src[rule.id]?.plan) || 0,
+        fact: Number(src[rule.id]?.fact) || 0,
+      };
+    }
+  });
+
+  let photo = Math.max(0, Math.floor(Number(src.photoReportPassed) || 0));
+  let service = Math.max(0, Math.floor(Number(src.servicePassed) || 0));
+  let txv = Math.max(0, Math.floor(Number(src.txvPassed) || 0));
+  if (photo > salonsTotal) photo = salonsTotal;
+  if (service > salonsTotal) service = salonsTotal;
+  if (txv > salonsTotal) txv = salonsTotal;
+
+  base.photoReportPassed = photo;
+  base.servicePassed = service;
+  base.txvPassed = txv;
+  return base;
+}
+
+function mergeOperatorData(raw, salonsTotal) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  // Не обрезаем Tele2 здесь: превышение ловит валидация расчёта
+  const tele2Salons = Math.max(0, Math.floor(Number(src.tele2Salons) || 0));
+
+  const existing = Array.isArray(src.salons) ? src.salons : [];
+  const salons = [];
+  for (let i = 0; i < tele2Salons; i += 1) {
+    const prev = existing[i]?.kpis || {};
+    const kpis = createEmptyTele2SalonKpis();
+    operatorTele2Kpis.forEach((kpi) => {
+      kpis[kpi.id] = Boolean(prev[kpi.id]);
+    });
+    salons.push({ kpis });
+  }
+
+  return { tele2Salons, salons };
 }
 
 function saveStore(store) {
@@ -177,13 +226,22 @@ function updateMonthField(store, updater) {
   const data = ensureActiveMonthData(store);
   updater(data);
 
-  // Ограничение: выполнившие Комбо ≤ салонов в подчинении
+  // Единые ограничения по количеству салонов
+  data.salonsTotal = Math.max(0, Math.floor(Number(data.salonsTotal) || 0));
   if (data.salonsComboDone > data.salonsTotal) {
     data.salonsComboDone = data.salonsTotal;
   }
 
+  data.administrative = mergeAdministrativeData(data.administrative, data.salonsTotal);
+  data.operator = mergeOperatorData(data.operator, data.salonsTotal);
+
+  // Пересохраняем нормализованный месяц
+  const employee = getActiveEmployee(store);
+  const key = getActivePeriodKey(store);
+  employee.months[key] = mergeMonthData(data);
+
   saveStore(store);
-  return data;
+  return employee.months[key];
 }
 
 function searchEmployees(store, query) {

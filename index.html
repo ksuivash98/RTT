@@ -22,10 +22,8 @@
       <div class="header-meta" id="headerPeriodLabel"></div>
     </header>
 
-    <!-- Аналитические карточки -->
     <section class="analytics-grid" id="analyticsCards" aria-label="Общая аналитика"></section>
 
-    <!-- 1. Сотрудник и период -->
     <section class="panel" id="section-employee">
       <div class="panel-head">
         <h2>Сотрудник и период</h2>
@@ -69,19 +67,89 @@
       </div>
     </section>
 
-    <!-- 2. Окладная часть -->
+    <section class="panel panel-salons" id="section-salons">
+      <div class="panel-head">
+        <h2>Количество салонов</h2>
+        <p>Единое значение для экономики, администрации и операторского блока</p>
+      </div>
+      <div class="form-grid form-grid-2">
+        <label class="field">
+          <span>Количество салонов в подчинении</span>
+          <input type="number" id="salonsTotal" min="0" step="1" />
+        </label>
+        <div class="field">
+          <span>Подсказка</span>
+          <div class="hint-box" id="salonsHint">Укажите число салонов, чтобы считались Комбо, фотоотчёт, сервис, ТхВ и бюджет Tele2</div>
+        </div>
+      </div>
+      <div id="salonsValidation" class="validation-msg" hidden></div>
+    </section>
+
     <section class="panel" id="section-salary">
       <div class="panel-head">
         <h2>Окладная часть</h2>
         <p>Оклад зависит только от грейда, без учёта часов</p>
       </div>
-
       <div class="grade-grid" id="gradeSelector"></div>
-
       <div class="salary-summary" id="salarySummary"></div>
     </section>
 
-    <!-- 3. Бонус за продажи -->
+    <section class="panel" id="section-economy">
+      <div class="panel-head">
+        <h2>Бонус за экономический блок</h2>
+        <p>Сначала Кредиты / аттачмент, затем коэффициент эффективности</p>
+      </div>
+
+      <div class="form-grid form-grid-3">
+        <label class="field">
+          <span>Выполнили KPI Комбо 40%+</span>
+          <input type="number" id="salonsComboDone" min="0" step="1" />
+        </label>
+        <label class="field">
+          <span>Выполнение плана по доле кредитов, %</span>
+          <input type="number" id="creditPlanPercent" min="0" step="0.1" />
+        </label>
+        <label class="field">
+          <span>Аттачмент</span>
+          <input type="number" id="attachment" min="0" step="0.01" />
+        </label>
+      </div>
+
+      <div class="coeff-row" id="coeffRow"></div>
+      <div class="combo-card" id="comboCard"></div>
+      <div class="kpi-list" id="economyKpiList"></div>
+      <div id="economyWhyLosing" class="why-losing"></div>
+      <div class="result-strip" id="economyResultStrip"></div>
+    </section>
+
+    <section class="panel" id="section-admin">
+      <div class="panel-head">
+        <h2>Бонус за административный блок</h2>
+        <p>Своя логика · без эффективности / кредитов / аттачмента / сезонности</p>
+      </div>
+      <div id="adminBlock"></div>
+      <div class="result-strip" id="adminResultStrip"></div>
+    </section>
+
+    <section class="panel" id="section-operator">
+      <div class="panel-head">
+        <h2>Бонус за операторский блок</h2>
+        <p>Только TELE2 · бюджет × коэффициент выполнения KPI</p>
+      </div>
+      <div id="operatorBlock"></div>
+      <div class="result-strip" id="operatorResultStrip"></div>
+    </section>
+
+    <section class="panel" id="section-blacklist">
+      <div class="panel-head">
+        <h2>Чёрный список</h2>
+        <p>Конфигурация blackListRules — готова к расширению</p>
+      </div>
+      <div id="blackListBlock" class="empty-config">
+        <p>Условия ещё не заданы. Добавьте правила в <code>blackListRules</code> в файле <code>data.js</code>.</p>
+      </div>
+    </section>
+
     <section class="panel" id="section-sales">
       <div class="panel-head">
         <h2>Бонус за продажи</h2>
@@ -123,75 +191,6 @@
       <div class="result-strip" id="salesResultStrip"></div>
     </section>
 
-    <!-- 4. Экономический блок -->
-    <section class="panel" id="section-economy">
-      <div class="panel-head">
-        <h2>Бонус за экономический блок</h2>
-        <p>Сначала Кредиты / аттачмент, затем коэффициент эффективности</p>
-      </div>
-
-      <div class="form-grid form-grid-4">
-        <label class="field">
-          <span>Салонов в подчинении</span>
-          <input type="number" id="salonsTotal" min="0" step="1" />
-        </label>
-        <label class="field">
-          <span>Выполнили KPI Комбо 40%+</span>
-          <input type="number" id="salonsComboDone" min="0" step="1" />
-        </label>
-        <label class="field">
-          <span>Выполнение плана по доле кредитов, %</span>
-          <input type="number" id="creditPlanPercent" min="0" step="0.1" />
-        </label>
-        <label class="field">
-          <span>Аттачмент</span>
-          <input type="number" id="attachment" min="0" step="0.01" />
-        </label>
-      </div>
-
-      <div class="coeff-row" id="coeffRow"></div>
-      <div class="combo-card" id="comboCard"></div>
-
-      <div class="kpi-list" id="economyKpiList"></div>
-
-      <div id="economyWhyLosing" class="why-losing"></div>
-      <div class="result-strip" id="economyResultStrip"></div>
-    </section>
-
-    <!-- 5. Административный блок -->
-    <section class="panel" id="section-admin">
-      <div class="panel-head">
-        <h2>Бонус за административный блок</h2>
-        <p>Конфигурация administrativeRules — готова к расширению</p>
-      </div>
-      <div id="adminBlock" class="empty-config">
-        <p>Правила ещё не заданы. Добавьте KPI в <code>administrativeRules</code> в файле <code>data.js</code>.</p>
-      </div>
-    </section>
-
-    <!-- 6. Операторский блок -->
-    <section class="panel" id="section-operator">
-      <div class="panel-head">
-        <h2>Бонус за операторский блок</h2>
-        <p>Конфигурация operatorRules — готова к расширению</p>
-      </div>
-      <div id="operatorBlock" class="empty-config">
-        <p>Правила ещё не заданы. Добавьте KPI в <code>operatorRules</code> в файле <code>data.js</code>.</p>
-      </div>
-    </section>
-
-    <!-- 7. Чёрный список -->
-    <section class="panel" id="section-blacklist">
-      <div class="panel-head">
-        <h2>Чёрный список</h2>
-        <p>Конфигурация blackListRules — готова к расширению</p>
-      </div>
-      <div id="blackListBlock" class="empty-config">
-        <p>Условия ещё не заданы. Добавьте правила в <code>blackListRules</code> в файле <code>data.js</code>.</p>
-      </div>
-    </section>
-
-    <!-- 8. Потери и возможности -->
     <section class="panel" id="section-losses">
       <div class="panel-head">
         <h2>Анализ потерь и возможностей</h2>
@@ -200,13 +199,20 @@
       <div id="lossesBlock"></div>
     </section>
 
-    <!-- 9. Итоговая зарплата -->
     <section class="panel panel-total" id="section-total">
       <div class="panel-head">
         <h2>Итоговая зарплата</h2>
         <p>Оклад + бонусы − штрафы</p>
       </div>
       <div id="totalBlock"></div>
+    </section>
+
+    <section class="panel" id="section-composition">
+      <div class="panel-head">
+        <h2>Из чего складывается зарплата</h2>
+        <p>Структура итоговой выплаты по блокам</p>
+      </div>
+      <div id="compositionBlock"></div>
     </section>
 
     <footer class="app-footer">
